@@ -5,7 +5,6 @@
 #include "protocol/chatsession.h"
 
 #include <QDragEnterEvent>
-#include <QDialog>
 #include <QDropEvent>
 #include <QFont>
 #include <QHBoxLayout>
@@ -16,58 +15,70 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QStackedWidget>
 #include <QSignalBlocker>
 #include <QTextBlock>
 #include <QTextBrowser>
-#include <QTextImageFormat>
 #include <QUrl>
 #include <QVBoxLayout>
 
-namespace {
-
-class ImagePreviewDialog final : public QDialog {
+class ChatImagePreviewWidget final : public QWidget {
 public:
-  explicit ImagePreviewDialog(const QPixmap &image, QWidget *parent = nullptr)
-      : QDialog(parent), image_(image), imageLabel_(new QLabel(this)) {
-    setWindowTitle(QStringLiteral("Image preview"));
+  explicit ChatImagePreviewWidget(QWidget *parent = nullptr)
+      : QWidget(parent), imageLabel_(new QLabel(this)),
+        closeButton_(new QPushButton(QStringLiteral("Close"), this)) {
     setStyleSheet(QStringLiteral("background-color: #111; color: white;"));
 
     auto *layout = new QVBoxLayout(this);
     auto *header = new QHBoxLayout;
     header->addStretch();
-    auto *closeButton = new QPushButton(QStringLiteral("Close"), this);
-    header->addWidget(closeButton);
+    header->addWidget(closeButton_);
     layout->addLayout(header);
 
     imageLabel_->setAlignment(Qt::AlignCenter);
     layout->addWidget(imageLabel_, 1);
-    connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
   }
+
+  void setImage(const QPixmap &image) {
+    image_ = image;
+    updateImage();
+  }
+
+  QPushButton *closeButton() const { return closeButton_; }
 
 protected:
   void resizeEvent(QResizeEvent *event) override {
-    QDialog::resizeEvent(event);
-    imageLabel_->setPixmap(image_.scaled(imageLabel_->size(),
-                                         Qt::KeepAspectRatio,
-                                         Qt::SmoothTransformation));
+    QWidget::resizeEvent(event);
+    updateImage();
   }
 
 private:
+  void updateImage() {
+    if (!image_.isNull()) {
+      imageLabel_->setPixmap(image_.scaled(imageLabel_->size(),
+                                           Qt::KeepAspectRatio,
+                                           Qt::SmoothTransformation));
+    }
+  }
+
   QPixmap image_;
   QLabel *imageLabel_;
+  QPushButton *closeButton_;
 };
-
-} // namespace
 
 ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     : QWidget(parent), session_(session) {
   setAcceptDrops(true);
   auto *layout = new QVBoxLayout(this);
   status_ = new QLabel(QStringLiteral("Performing nickname handshake…"), this);
+  viewStack_ = new QStackedWidget(this);
   log_ = new QTextBrowser(this);
   log_->setReadOnly(true);
   log_->setOpenLinks(false);
   log_->setOpenExternalLinks(false);
+  imageViewer_ = new ChatImagePreviewWidget(this);
+  viewStack_->addWidget(log_);
+  viewStack_->addWidget(imageViewer_);
   auto *controls = new QHBoxLayout;
   input_ = new QLineEdit(this);
   translateButton_ = new QPushButton(QStringLiteral("Live Translate"), this);
@@ -77,7 +88,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   controls->addWidget(translateButton_);
   controls->addWidget(send);
   layout->addWidget(status_);
-  layout->addWidget(log_);
+  layout->addWidget(viewStack_);
   layout->addLayout(controls);
   refreshTranslationAvailability();
 
@@ -102,10 +113,11 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     if (image.isNull()) {
       return;
     }
-    ImagePreviewDialog dialog(image, this);
-    dialog.setWindowState(dialog.windowState() | Qt::WindowFullScreen);
-    dialog.exec();
+    imageViewer_->setImage(image);
+    viewStack_->setCurrentWidget(imageViewer_);
   });
+  connect(imageViewer_->closeButton(), &QPushButton::clicked, this,
+          [this] { viewStack_->setCurrentWidget(log_); });
   connect(session_, &ChatSession::messageReceived, this, &ChatTab::received);
   connect(
       session_, &ChatSession::fileSent, this,
@@ -349,18 +361,14 @@ void ChatTab::appendFile(const QString &sender, const QString &name,
   cursor.insertText(sender + QStringLiteral(": sent "), senderFormat);
   QTextCharFormat nameFormat;
   nameFormat.setFontItalic(true);
+  if (mimeType.startsWith(QStringLiteral("image/"))) {
+    const auto imageUrl = QUrl::fromLocalFile(path);
+    nameFormat.setAnchor(true);
+    nameFormat.setAnchorHref(imageUrl.toString());
+    nameFormat.setFontUnderline(true);
+    nameFormat.setToolTip(QStringLiteral("Click to view image in chat"));
+  }
   cursor.insertText(name, nameFormat);
   cursor.insertBlock();
-
-  if (mimeType.startsWith(QStringLiteral("image/"))) {
-    QTextImageFormat image;
-    image.setName(QUrl::fromLocalFile(path).toString());
-    image.setWidth(360);
-    image.setAnchor(true);
-    image.setAnchorHref(QUrl::fromLocalFile(path).toString());
-    image.setToolTip(QStringLiteral("Click to view full screen"));
-    cursor.insertImage(image);
-    cursor.insertBlock();
-  }
   log_->setTextCursor(cursor);
 }

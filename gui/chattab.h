@@ -10,7 +10,9 @@ class ChatSession;
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QStackedWidget;
 class QTextBrowser;
+class ChatImagePreviewWidget;
 class QDragEnterEvent;
 class QDropEvent;
 
@@ -56,7 +58,9 @@ private:
 
   ChatSession *session_;
   QLabel *status_;
+  QStackedWidget *viewStack_;
   QTextBrowser *log_;
+  ChatImagePreviewWidget *imageViewer_;
   QLineEdit *input_;
   QPushButton *translateButton_;
   OllamaClient outgoingTranslator_;

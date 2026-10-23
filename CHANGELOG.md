@@ -15,5 +15,6 @@
 ### Fixed
 
 - The TUI no longer prints the connection confirmation twice.
-- GUI attachments always start on a new line, and image previews open in a
-  full-screen viewer with a close button when clicked.
+- GUI attachments always start on a new line. Image files are not shown inline;
+  clicking their filename opens them in a full-view chat panel with a close
+  button.
