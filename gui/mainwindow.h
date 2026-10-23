@@ -4,6 +4,7 @@
 #include <QHash>
 #include <QHostAddress>
 #include <QMainWindow>
+#include <QPointer>
 #include <QQueue>
 #include <QString>
 #include <QTcpServer>
@@ -47,7 +48,10 @@ private:
   void updateTrayIcon();
   void showFromTray();
   void clearUnreadMessages();
+  bool inForeground() const;
   void noteIncomingMessage();
+  void showNotification(ChatTab *tab, const QString &sender,
+                        const QString &preview);
   void setTabUnread(ChatTab *tab, bool unread);
   void announcePresence();
   void readDiscoveryDatagrams();
@@ -84,4 +88,6 @@ private:
   QTabWidget *tabs_;
   QSystemTrayIcon *trayIcon_ = nullptr;
   int unreadMessageCount_ = 0;
+  // The conversation the last notification was about; clicking it opens it.
+  QPointer<ChatTab> notifiedTab_;
 };

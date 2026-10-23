@@ -30,5 +30,8 @@ QString withoutTranslateFlags(const QString &message);
 // Whether pasted text is large enough to become a quote rather than inline
 // text: it spans several lines or is long.
 bool shouldQuote(const QString &pastedText);
+// A one-line summary for notifications: the text on one line, each quote as
+// "[quote: N lines]", shortened to about maxLength characters.
+QString preview(const QString &message, int maxLength = 160);
 
 } // namespace QuotedMessage

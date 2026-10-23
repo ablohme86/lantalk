@@ -132,6 +132,12 @@ void MainWindow::setupTrayIcon() {
   trayIcon_->setContextMenu(menu);
   connect(openAction, &QAction::triggered, this, &MainWindow::showFromTray);
   connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);
+  connect(trayIcon_, &QSystemTrayIcon::messageClicked, this, [this] {
+    showFromTray();
+    if (notifiedTab_ && tabs_->indexOf(notifiedTab_) >= 0) {
+      tabs_->setCurrentWidget(notifiedTab_);
+    }
+  });
   connect(trayIcon_, &QSystemTrayIcon::activated, this,
           [this](QSystemTrayIcon::ActivationReason reason) {
             if (reason == QSystemTrayIcon::Trigger ||
@@ -186,15 +192,33 @@ void MainWindow::clearUnreadMessages() {
   updateTrayIcon();
 }
 
+bool MainWindow::inForeground() const {
+  return isActiveWindow() ||
+         (QGuiApplication::applicationState() == Qt::ApplicationActive &&
+          isVisible() && !isMinimized());
+}
+
 void MainWindow::noteIncomingMessage() {
-  if (isActiveWindow() ||
-      (QGuiApplication::applicationState() == Qt::ApplicationActive &&
-       isVisible() && !isMinimized())) {
+  if (inForeground()) {
     clearUnreadMessages();
     return;
   }
   ++unreadMessageCount_;
   updateTrayIcon();
+}
+
+void MainWindow::showNotification(ChatTab *tab, const QString &sender,
+                                  const QString &preview) {
+  // A desktop notification (a toast on Windows, the notification service on
+  // Linux) through the tray icon, unless LANTalk is in front by now.
+  if (inForeground() || !trayIcon_ || !QSystemTrayIcon::supportsMessages() ||
+      !QSettings()
+           .value(QStringLiteral("notifications/enabled"), true)
+           .toBool()) {
+    return;
+  }
+  notifiedTab_ = tab;
+  trayIcon_->showMessage(sender, preview, createAppIcon(), 8000);
 }
 
 void MainWindow::setTabUnread(ChatTab *tab, bool unread) {
@@ -539,6 +563,10 @@ ChatTab *MainWindow::createTab(ChatSession *session,
           [this, tab] {
             if (tabs_->currentWidget() != tab) setTabUnread(tab, true);
             noteIncomingMessage();
+          });
+  connect(tab, &ChatTab::notifyIncoming, this,
+          [this, tab](const QString &sender, const QString &preview) {
+            showNotification(tab, sender, preview);
           });
   connect(tab, &ChatTab::titleChanged, this, [this, tab] {
     const auto tabIndex = tabs_->indexOf(tab);

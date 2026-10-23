@@ -2,6 +2,7 @@
 
 #include "appconfig.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -69,6 +70,11 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
           .toUInt());
   layout->addRow(QStringLiteral("Nickname"), nickname_);
   layout->addRow(QStringLiteral("Listen port"), listenPort_);
+  notifications_ = new QCheckBox(
+      QStringLiteral("Notify me about new messages"), this);
+  notifications_->setChecked(
+      settings.value(QStringLiteral("notifications/enabled"), true).toBool());
+  layout->addRow(QStringLiteral("Notifications"), notifications_);
   layout->addRow(QStringLiteral("Ollama URL"), ollamaUrl_);
   layout->addRow(QStringLiteral("Ollama model"), ollamaModel_);
   auto *buttons = new QDialogButtonBox(
@@ -84,6 +90,8 @@ void SettingsDialog::save() const {
   settings.setValue(QStringLiteral("profile/nickname"),
                     nickname.isEmpty() ? QStringLiteral("Guest") : nickname);
   settings.setValue(QStringLiteral("network/listenPort"), listenPort_->value());
+  settings.setValue(QStringLiteral("notifications/enabled"),
+                    notifications_->isChecked());
   settings.setValue(QStringLiteral("ollama/url"),
                     ollamaUrl_->text().trimmed().remove(
                         QRegularExpression(QStringLiteral("/+$"))));

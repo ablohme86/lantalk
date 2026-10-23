@@ -2,6 +2,7 @@
 
 #include <QDialog>
 
+class QCheckBox;
 class QComboBox;
 class QLineEdit;
 class QSpinBox;
@@ -28,4 +29,5 @@ private:
   QLineEdit *ollamaUrl_;
   QLineEdit *ollamaModel_;
   QSpinBox *listenPort_;
+  QCheckBox *notifications_;
 };

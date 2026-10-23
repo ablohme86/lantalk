@@ -246,10 +246,6 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(imageViewer_->closeButton(), &QPushButton::clicked, this,
           [this] { viewStack_->setCurrentWidget(log_); });
   connect(session_, &ChatSession::messageReceived, this, &ChatTab::received);
-  connect(session_, &ChatSession::messageReceived, this,
-          [this](const QString &, const QString &) {
-            emit incomingMessageReceived();
-          });
   connect(
       session_, &ChatSession::fileSent, this,
       [this](const QString &name, const QString &path, const QString &mime) {
@@ -260,6 +256,8 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       [this](const QString &name, const QString &path, const QString &mime) {
         appendFile(session_->peerName(), name, path, mime, true);
         emit incomingMessageReceived();
+        emit notifyIncoming(session_->peerName(),
+                            QStringLiteral("Sent a file: %1").arg(name));
       });
   connect(session_, &ChatSession::fileSendProgressChanged, this,
           [this](int percent) {
@@ -324,10 +322,12 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       session_, &ChatSession::peerLiveTranslationChanged, this,
       [this](bool active, const QString &sourceLanguage,
              const QString &targetLanguage) {
+        // The peer translates from its language (source) into ours
+        // (target); we read the pair from our side: ours first.
         status_->setText(
             active ? QStringLiteral("%1 enabled Live Translate (%2 → %3).")
-                         .arg(session_->peerName(), sourceLanguage,
-                              targetLanguage)
+                         .arg(session_->peerName(), targetLanguage,
+                              sourceLanguage)
                    : QStringLiteral("%1 disabled Live Translate.")
                          .arg(session_->peerName()));
       });
@@ -471,7 +471,9 @@ void ChatTab::addQuote(const QString &pastedText) {
   cardLayout->setSpacing(2);
   auto *header = new QHBoxLayout;
   auto *summary = new QLabel(quoteSummary(text), card);
-  auto *translate = new QCheckBox(QStringLiteral("Translate this"), card);
+  auto *translate = new QCheckBox(QStringLiteral("Translate quote"), card);
+  translate->setToolTip(QStringLiteral(
+      "Translate this quote too; otherwise it is sent as it is."));
   auto *remove = new QToolButton(card);
   remove->setText(QStringLiteral("✕"));
   remove->setAutoRaise(true);
@@ -495,10 +497,17 @@ void ChatTab::addQuote(const QString &pastedText) {
   connect(editor->document()->documentLayout(),
           &QAbstractTextDocumentLayout::documentSizeChanged, editor, fit);
   fit();
-  connect(editor, &QPlainTextEdit::textChanged, this, [this, editor, summary] {
-    summary->setText(quoteSummary(editor->toPlainText()));
-    updateLocalTyping();
-  });
+  connect(editor, &QPlainTextEdit::textChanged, this,
+          [this, card, editor, summary] {
+            // Deleting all of a quote's text removes the quote.
+            if (editor->toPlainText().trimmed().isEmpty()) {
+              removeQuote(card);
+              input_->setFocus(Qt::OtherFocusReason);
+              return;
+            }
+            summary->setText(quoteSummary(editor->toPlainText()));
+            updateLocalTyping();
+          });
   connect(remove, &QToolButton::clicked, this,
           [this, card] { removeQuote(card); });
   updateQuoteTranslation();
@@ -526,14 +535,10 @@ void ChatTab::clearQuotes() {
 }
 
 void ChatTab::updateQuoteTranslation() {
-  // Quotes are sent as they are unless Live Translate translates them.
+  // The choice only exists while Live Translate is on; otherwise quotes are
+  // always sent as they are.
   for (const auto &quote : std::as_const(pendingQuotes_)) {
-    quote.translate->setEnabled(liveTranslate_);
-    quote.translate->setToolTip(
-        liveTranslate_
-            ? QStringLiteral("Translate this quote too; otherwise it is "
-                             "sent as it is.")
-            : QStringLiteral("Turn on Live Translate to translate quotes."));
+    quote.translate->setVisible(liveTranslate_);
   }
 }
 
@@ -626,7 +631,7 @@ void ChatTab::send() {
       outgoingPending_) {
     return;
   }
-  // The typed text first, then the quotes; quotes ticked "Translate this"
+  // The typed text first, then the quotes; quotes ticked "Translate quote"
   // keep their mark until the translator has seen it.
   QList<QuotedMessage::Segment> segments;
   if (!text.trimmed().isEmpty()) segments.append({text});
@@ -635,8 +640,7 @@ void ChatTab::send() {
     const auto quoted = trimmedQuote(quote.editor->toPlainText());
     if (quoted.isEmpty()) continue;
     segments.append({quoted, true,
-                     quote.translate->isEnabled() &&
-                         quote.translate->isChecked()});
+                     liveTranslate_ && quote.translate->isChecked()});
   }
   if (segments.isEmpty()) return;
   const auto draft = QuotedMessage::compose(segments, true);
@@ -669,9 +673,13 @@ void ChatTab::received(const QString &message, const QString &originalMessage) {
   const int index = incomingMessages_.size();
   incomingMessages_.append(
       {message, cursor, !originalMessage.isEmpty(), false});
+  emit incomingMessageReceived();
   if (liveTranslate_ && originalMessage.isEmpty()) {
+    incomingMessages_[index].notify = true;
     translateIncomingMessage(index);
+    return;
   }
+  emit notifyIncoming(session_->peerName(), QuotedMessage::preview(message));
 }
 
 void ChatTab::translatePendingIncomingMessages() {
@@ -831,6 +839,11 @@ void ChatTab::replaceTranslationStatus(const QString &originalMessage,
     auto endCursor = log_->textCursor();
     endCursor.movePosition(QTextCursor::End);
     log_->setTextCursor(endCursor);
+    // The translation, or the original if translating failed.
+    if (std::exchange(incoming.notify, false)) {
+      emit notifyIncoming(session_->peerName(),
+                          QuotedMessage::preview(replacement));
+    }
     return;
   }
 }

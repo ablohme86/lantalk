@@ -2,7 +2,30 @@
 
 ## Unreleased
 
+### Added
+
+- Desktop notifications for messages and files that arrive while the GUI
+  window is not active: a toast on Windows and a notification through the
+  desktop's notification service on Linux, showing the sender and a short
+  preview. With Live Translate on, the notification waits for the
+  translation and shows it. Clicking one opens that conversation. They can
+  be turned off in Settings.
+
+### Changed
+
+- The quote checkbox reads "Translate quote" and appears only while Live
+  Translate is on. Deleting all of a quote's text removes the quote.
+- When the other participant turns on Live Translate, the status shows the
+  language pair from your side, your language first (for example
+  `English → Norwegian Bokmål` for the English-speaking participant).
+
 ## v1.4.0 - 2026-10-23
+
+### Added
+
+- GUI quote cards show the pasted text in an editable field that grows to
+  twelve lines, so a quote can be reviewed and changed before it is sent.
+  The message input also grows to twelve lines instead of six.
 
 ## v1.3.0 - 2026-10-23
 
@@ -16,9 +39,6 @@
   pastes plain text in the GUI.
 - The TUI uses bracketed paste, so a multi-line paste no longer sends each
   line as a separate message.
-- GUI quote cards show the pasted text in an editable field that grows to
-  twelve lines, so a quote can be reviewed and changed before it is sent.
-  The message input also grows to twelve lines instead of six.
 
 ## v1.2.0 - 2026-10-23
 

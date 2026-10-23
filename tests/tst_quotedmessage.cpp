@@ -62,6 +62,17 @@ private slots:
     QVERIFY(QuotedMessage::shouldQuote(QString(201, u'x')));
   }
 
+  void previewsFitOnOneLine() {
+    QCOMPARE(QuotedMessage::preview(QStringLiteral("hi\n  there")),
+             QStringLiteral("hi there"));
+    QCOMPARE(QuotedMessage::preview(
+                 QStringLiteral("Look:\n[quote]\na\nb\n[/quote]")),
+             QStringLiteral("Look: [quote: 2 lines]"));
+    const auto shortened = QuotedMessage::preview(QString(300, u'x'), 50);
+    QCOMPARE(shortened.size(), 50);
+    QVERIFY(shortened.endsWith(QStringLiteral("…")));
+  }
+
   void translatorLeavesQuotesAlone() {
     FakeOllama ollama({QStringLiteral("translator")});
     QVERIFY(ollama.listen());

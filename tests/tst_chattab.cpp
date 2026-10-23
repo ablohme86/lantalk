@@ -13,6 +13,8 @@
 #include <QPushButton>
 #include <QSignalSpy>
 
+#include <algorithm>
+
 using namespace TestSupport;
 
 class ChatTabTest final : public QObject {
@@ -157,7 +159,8 @@ private slots:
     QCheckBox *translate = nullptr;
     QTRY_VERIFY((translate = tab.findChild<QCheckBox *>()) != nullptr);
     QVERIFY(!translate->isChecked());
-    QVERIFY(!translate->isEnabled()); // Live Translate is off
+    QCOMPARE(translate->text(), QStringLiteral("Translate quote"));
+    QVERIFY(translate->isHidden()); // only shown while Live Translate is on
 
     // The quote is shown in full and can be edited before sending.
     auto *editor = tab.findChild<QPlainTextEdit *>(QStringLiteral("quoteEditor"));
@@ -180,6 +183,27 @@ private slots:
     QVERIFY(!log.contains(QStringLiteral("[quote]")));
   }
 
+  void emptyingAQuoteRemovesIt() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    ChatTab tab(session);
+    session->setParent(&tab);
+    tab.show();
+    auto *input = tab.findChild<ChatInput *>();
+    QVERIFY(input);
+
+    QGuiApplication::clipboard()->setText(QStringLiteral("one\ntwo"));
+    QTest::keyClick(input, Qt::Key_V, Qt::ControlModifier);
+    QPlainTextEdit *editor = nullptr;
+    QTRY_VERIFY((editor = tab.findChild<QPlainTextEdit *>(
+                     QStringLiteral("quoteEditor"))) != nullptr);
+    QTest::keyClick(editor, Qt::Key_A, Qt::ControlModifier);
+    QTest::keyClick(editor, Qt::Key_Delete);
+    QTRY_VERIFY(tab.findChild<QPlainTextEdit *>(QStringLiteral("quoteEditor")) ==
+                nullptr);
+  }
+
   void ctrlShiftVPastesPlainText() {
     Peer alice(QStringLiteral("alice"));
     Peer bob(QStringLiteral("bob"));
@@ -194,6 +218,75 @@ private slots:
     QTest::keyClick(input, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
     QCOMPARE(input->text(), QStringLiteral("a\nb"));
     QVERIFY(tab.findChild<QCheckBox *>() == nullptr);
+  }
+
+  void notificationsShowTheMessage() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    ChatTab tab(session);
+    session->setParent(&tab);
+    QSignalSpy notified(&tab, &ChatTab::notifyIncoming);
+    QTRY_COMPARE(bob.liveSessions().size(), 1);
+    QTRY_VERIFY(session->isHandshakeComplete());
+
+    bob.liveSessions().first()->sendMessage(QStringLiteral("hello\nthere"));
+    QTRY_COMPARE(notified.size(), 1);
+    QCOMPARE(notified.first().at(0).toString(), QStringLiteral("bob"));
+    QCOMPARE(notified.first().at(1).toString(), QStringLiteral("hello there"));
+  }
+
+  void notificationsWaitForLiveTranslate() {
+    FakeOllama ollama({QStringLiteral("translator")});
+    QVERIFY(ollama.listen());
+    configureOllama(ollama.url(), QStringLiteral("translator"));
+    TranslationSettings::save(QStringLiteral("127.0.0.1"),
+                              QStringLiteral("bob"),
+                              {true, QStringLiteral("Norwegian Bokmål"),
+                               QStringLiteral("English")});
+
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = new ChatSession(new QTcpSocket, nullptr, &alice.registry());
+    ChatTab tab(session);
+    session->setParent(&tab);
+    QSignalSpy notified(&tab, &ChatTab::notifyIncoming);
+    QSignalSpy unread(&tab, &ChatTab::incomingMessageReceived);
+    session->beginHandshake(QStringLiteral("alice"));
+    session->connectToHost(QStringLiteral("127.0.0.1"), bob.port());
+    QTRY_VERIFY(session->liveTranslationActiveOrPending());
+    QTRY_COMPARE(bob.liveSessions().size(), 1);
+    QTest::qWait(100);
+
+    bob.liveSessions().first()->sendMessage(QStringLiteral("hello"));
+    QTRY_COMPARE(unread.size(), 1);
+    QTRY_COMPARE(notified.size(), 1);
+    QCOMPARE(notified.first().at(1).toString(), QStringLiteral("<<hello>>"));
+    QTest::qWait(100);
+    QCOMPARE(notified.size(), 1);
+  }
+
+  void peerTranslationStatusShowsOurLanguageFirst() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *aliceSession = alice.connectTo(bob);
+    QTRY_COMPARE(bob.liveSessions().size(), 1);
+    auto *bobSession = bob.liveSessions().first();
+    ChatTab bobTab(bobSession);
+    QTRY_VERIFY(aliceSession->isHandshakeComplete());
+
+    // Alice reads Norwegian and translates to and from Bob's English.
+    aliceSession->requestLiveTranslation(QStringLiteral("Norwegian Bokmål"),
+                                         QStringLiteral("English"));
+    const auto showsStatus = [&bobTab] {
+      const auto labels = bobTab.findChildren<QLabel *>();
+      return std::any_of(labels.cbegin(), labels.cend(), [](const QLabel *label) {
+        return label->text() ==
+               QStringLiteral(
+                   "alice enabled Live Translate (English → Norwegian Bokmål).");
+      });
+    };
+    QTRY_VERIFY(showsStatus());
   }
 
   void savedTranslationResumesAndChecksButton() {

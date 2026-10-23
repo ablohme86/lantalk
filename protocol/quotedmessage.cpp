@@ -1,6 +1,7 @@
 #include "protocol/quotedmessage.h"
 
 #include <QRegularExpression>
+#include <QStringList>
 
 namespace {
 
@@ -75,6 +76,25 @@ QString QuotedMessage::compose(const QList<Segment> &segments,
 QString QuotedMessage::withoutTranslateFlags(const QString &message) {
   if (!message.contains(TranslatedQuoteOpen)) return message;
   return compose(parse(message), false);
+}
+
+QString QuotedMessage::preview(const QString &message, int maxLength) {
+  QStringList parts;
+  for (const auto &segment : parse(message)) {
+    if (!segment.quote) {
+      parts << segment.text.simplified();
+      continue;
+    }
+    const int lines = int(segment.text.count(u'\n')) + 1;
+    parts << QStringLiteral("[quote: %1 line%2]")
+                 .arg(lines)
+                 .arg(lines == 1 ? QString() : QStringLiteral("s"));
+  }
+  auto text = parts.join(u' ').simplified();
+  if (text.size() > maxLength) {
+    text = text.left(maxLength - 1).trimmed() + QStringLiteral("…");
+  }
+  return text;
 }
 
 bool QuotedMessage::shouldQuote(const QString &pastedText) {

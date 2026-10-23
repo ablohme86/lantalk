@@ -6,7 +6,11 @@ On first launch it copies the settings, chat history, and open tabs saved by
 LANChat. Each connected host has its own chat tab. The optional
 Live Translate feature uses a local Ollama `translategemma` model.
 The desktop app includes a custom chat icon and a system tray icon that shows
-unread messages received while LANTalk is in the background. The GUI remembers
+unread messages received while LANTalk is in the background. Messages and
+files that arrive while the window is not active also raise a desktop
+notification (a toast on Windows, the desktop's notification service on
+Linux) with the sender and a short preview (translated, when Live Translate
+translates the message); clicking it opens that conversation. Turn it off under Settings → General → Notifications. The GUI remembers
 open chat tabs across restarts and retries disconnected peers every 10 seconds
 while their tab remains open.
 Connection tabs show each peer's IP address while connected and use
@@ -49,10 +53,11 @@ instead: a card above the GUI input that shows the text in an editable field,
 so it can be checked and changed before sending (in the TUI, `[quote 1: N
 lines]` before the input). Quotes are sent after your typed text, shown as a
 block, and never translated by Live Translate unless you tick its "Translate
-this" box (TUI: `/quote-translate [n|all]`; `/unquote [n|all]` removes it).
-Each card has a remove button; in the TUI, Backspace on an empty input removes
-the last quote. `Ctrl+Shift+V` in the GUI pastes as plain text. The GUI window
-title and the TUI menu bar show the LANTalk version.
+quote" box, which appears while Live Translate is on (TUI: `/quote-translate
+[n|all]`; `/unquote [n|all]` removes it). Each card has a remove button, and
+emptying its text removes it too; in the TUI, Backspace on an empty input
+removes the last quote. `Ctrl+Shift+V` in the GUI pastes as plain text. The
+GUI window title and the TUI menu bar show the LANTalk version.
 
 The app automatically selects the ANSI terminal interface when launched from
 an interactive terminal. It uses the desktop GUI otherwise. Pass `--tui` to
@@ -122,7 +127,7 @@ disconnect, or 35 seconds after the last `TYPING START`.
 
 Quotes travel inside the message text as `[quote]` and `[/quote]` lines.
 LANTalk renders them as blocks and does not translate them; clients without
-quote support show the tags as text. The "Translate this" choice is kept on
+quote support show the tags as text. The "Translate quote" choice is kept on
 the sender's side and never sent.
 
 ## Source layout

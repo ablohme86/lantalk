@@ -1051,10 +1051,11 @@ void TerminalUi::addSession(ChatSession *session, const QString &title)
     connect(session, &ChatSession::peerLiveTranslationChanged, this,
             [this, session](bool active, const QString &sourceLanguage,
                    const QString &targetLanguage) {
+                // Read from our side: our language (the peer's target) first.
                 setStatus(active
                               ? QStringLiteral("%1 enabled Live Translate (%2 → %3).")
-                                    .arg(session->peerName(), sourceLanguage,
-                                         targetLanguage)
+                                    .arg(session->peerName(), targetLanguage,
+                                         sourceLanguage)
                               : QStringLiteral("%1 disabled Live Translate.")
                                     .arg(session->peerName()));
             });

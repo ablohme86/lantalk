@@ -40,6 +40,9 @@ public:
 signals:
   void titleChanged();
   void incomingMessageReceived();
+  // What a desktop notification for an incoming message or file should
+  // show. With Live Translate on, it follows the translation.
+  void notifyIncoming(const QString &sender, const QString &preview);
 
 private slots:
   void configureTranslation();
@@ -57,6 +60,8 @@ private:
     QTextCursor messageCursor;
     bool translated = false;
     bool pending = false;
+    // A notification waits for this message's translation.
+    bool notify = false;
   };
 
   void dragEnterEvent(QDragEnterEvent *event) override;
