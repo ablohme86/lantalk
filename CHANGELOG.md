@@ -26,6 +26,7 @@
 - Live Translate status messages identify the peer who enabled or disabled it.
 - The GUI host list shows `Scanning for hosts...` until its initial network scan
   completes.
+- Previewing an image no longer constrains the chat window's resize range.
 - Starting LANChat again activates the existing process instead of opening a
   second UI.
 

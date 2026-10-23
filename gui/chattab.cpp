@@ -20,6 +20,7 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSaveFile>
+#include <QSizePolicy>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QSignalBlocker>
@@ -60,6 +61,7 @@ public:
     layout->addLayout(header);
 
     imageLabel_->setAlignment(Qt::AlignCenter);
+    imageLabel_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     layout->addWidget(imageLabel_, 1);
   }
 
