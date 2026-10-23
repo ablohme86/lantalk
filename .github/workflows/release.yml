@@ -3,6 +3,12 @@ name: Release
 # Run this workflow manually to bump the version (minor by default), tag it,
 # and publish a GitHub Release with a Linux tarball and Windows MSI/ZIP.
 # Pushing a vX.Y.Z tag yourself publishes that version without bumping.
+#
+# The jobs run on the self-hosted runners registered for this repository
+# (labels lantalk-linux and lantalk-windows; packaging/ci/setup-*-runner.*).
+# Linux builds run in the packaging/ci container with podman. The packages go
+# straight into the release, which stays a draft until all of them are in it,
+# so no artifact storage is used.
 on:
   workflow_dispatch:
     inputs:
@@ -27,38 +33,26 @@ concurrency:
 
 env:
   QT_VERSION: "6.8.3"
+  CI_IMAGE: lantalk-ci:qt6.8.3
 
 jobs:
   test:
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, lantalk-linux]
 
     steps:
       - name: Check out source
         uses: actions/checkout@v7
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl-dev libegl-dev libxkbcommon-dev libxkbcommon-x11-0 \
-            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-render-util0 libxcb-image0 libxcb-shape0
+      # Built once, and again only when the Containerfile changes.
+      - name: Build the container image
+        run: podman build -q -t "$CI_IMAGE" --build-arg "QT_VERSION=$QT_VERSION" -f packaging/ci/Containerfile packaging/ci
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.QT_VERSION }}
-          cache: true
-
-      - name: Build
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel
-
-      - name: Run unit tests
-        run: ctest --test-dir build --output-on-failure
+      - name: Build and run unit tests
+        run: podman run --rm -v "$PWD:/src:Z" -w /src "$CI_IMAGE" packaging/ci/linux-build.sh test
 
   version:
     needs: test
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, lantalk-linux]
     outputs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
@@ -95,12 +89,29 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
 
+      # The draft the builds upload into; already there if the run is run
+      # again.
+      - name: Open the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            exit 0
+          fi
+          scripts/release-notes.sh "$TAG" > "$RUNNER_TEMP/release-notes.md"
+          prerelease=()
+          if [[ "$TAG" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" --draft --verify-tag --title "LANTalk $TAG" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" --generate-notes "${prerelease[@]}"
+
   linux-package:
     needs: version
-    # The oldest supported runner keeps the glibc requirement of the tarball low.
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, lantalk-linux]
     env:
       PACKAGE: LanTalk-${{ needs.version.outputs.tag }}-linux-x86_64
+      TAG: ${{ needs.version.outputs.tag }}
 
     steps:
       - name: Check out release tag
@@ -108,41 +119,21 @@ jobs:
         with:
           ref: ${{ needs.version.outputs.tag }}
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl-dev libegl-dev libxkbcommon-dev libxkbcommon-x11-0 \
-            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-render-util0 libxcb-image0 libxcb-shape0
+      - name: Build the container image
+        run: podman build -q -t "$CI_IMAGE" --build-arg "QT_VERSION=$QT_VERSION" -f packaging/ci/Containerfile packaging/ci
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: ${{ env.QT_VERSION }}
-          cache: true
+      - name: Build and create tarball
+        run: podman run --rm -v "$PWD:/src:Z" -w /src -e PACKAGE "$CI_IMAGE" packaging/ci/linux-build.sh package
 
-      - name: Build LANTalk
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DLANTALK_BUILD_TESTS=OFF
-          cmake --build build --parallel
-
-      - name: Create tarball
-        run: |
-          # Qt's deploy step requires an absolute install prefix.
-          cmake --install build --prefix "$PWD/dist/$PACKAGE"
-          test -x "dist/$PACKAGE/bin/lantalk"
-          cp README.md LICENSE CHANGELOG.md "dist/$PACKAGE/"
-          tar -C dist -czf "dist/$PACKAGE.tar.gz" "$PACKAGE"
-
-      - name: Upload tarball
-        uses: actions/upload-artifact@v7
-        with:
-          name: linux-package
-          path: dist/${{ env.PACKAGE }}.tar.gz
-          if-no-files-found: error
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$TAG" "dist/$PACKAGE.tar.gz" --clobber
 
   windows-package:
     needs: version
-    runs-on: windows-2022
+    runs-on: [self-hosted, windows, lantalk-windows]
     env:
       RELEASE_TAG: ${{ needs.version.outputs.tag }}
 
@@ -173,6 +164,7 @@ jobs:
           $appDir = Join-Path $env:GITHUB_WORKSPACE 'dist\windows'
           $zipPath = Join-Path $env:GITHUB_WORKSPACE "dist\LanTalk-$env:RELEASE_TAG-windows-x64.zip"
 
+          Remove-Item -Recurse -Force $stageDir, $appDir -ErrorAction SilentlyContinue
           cmake --install build --config Release --prefix $stageDir
           New-Item -ItemType Directory -Force -Path $appDir | Out-Null
           Copy-Item -Path (Join-Path $stageDir 'bin\*') -Destination $appDir -Recurse -Force
@@ -181,12 +173,21 @@ jobs:
             throw 'The staged Windows app is missing lantalk.exe.'
           }
 
-          Compress-Archive -Path (Join-Path $appDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
+          Compress-Archive -Path (Join-Path $appDir '*') -DestinationPath $zipPath -CompressionLevel Optimal -Force
 
+      # The runner keeps global .NET tools between runs: install WiX once and
+      # update it only when the wanted version changes.
       - name: Install WiX Toolset
         shell: pwsh
         run: |
-          dotnet tool install --global wix --version 7.0.0
+          $wanted = '7.0.0'
+          $listed = dotnet tool list --global | Select-String '^\s*wix\s+(\S+)'
+          if (-not $listed) {
+            dotnet tool install --global wix --version $wanted
+          } elseif ($listed.Matches[0].Groups[1].Value -ne $wanted) {
+            dotnet tool update --global wix --version $wanted
+          }
+          if ($LASTEXITCODE -ne 0) { throw "WiX could not be installed (exit $LASTEXITCODE)" }
           Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.dotnet\tools"
 
       - name: Build MSI installer
@@ -197,46 +198,30 @@ jobs:
           $msiPath = "dist\LanTalk-$env:RELEASE_TAG-windows-x64.msi"
           wix build -acceptEula wix7 -arch x64 -d "ProductVersion=$env:PRODUCT_VERSION" -o $msiPath installer\LanTalk.wxs
 
-      - name: Upload Windows packages
-        uses: actions/upload-artifact@v7
-        with:
-          name: windows-packages
-          path: |
-            dist/LanTalk-${{ needs.version.outputs.tag }}-windows-x64.msi
-            dist/LanTalk-${{ needs.version.outputs.tag }}-windows-x64.zip
-          if-no-files-found: error
+      - name: Upload to the draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload $env:RELEASE_TAG "dist\LanTalk-$env:RELEASE_TAG-windows-x64.msi" "dist\LanTalk-$env:RELEASE_TAG-windows-x64.zip" --clobber
+          if ($LASTEXITCODE -ne 0) { throw "upload failed (exit $LASTEXITCODE)" }
 
   publish:
     needs: [version, linux-package, windows-package]
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, linux, lantalk-linux]
     env:
-      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ needs.version.outputs.tag }}
 
     steps:
-      - name: Check out release tag
-        uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.version.outputs.tag }}
-
-      - name: Download packages
-        uses: actions/download-artifact@v8
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Extract release notes
-        run: scripts/release-notes.sh "$RELEASE_TAG" > release-notes.md
-
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ needs.version.outputs.tag }}
-          name: LANTalk ${{ needs.version.outputs.tag }}
-          body_path: release-notes.md
-          generate_release_notes: true
-          prerelease: ${{ contains(needs.version.outputs.tag, '-') }}
-          files: |
-            dist/LanTalk-${{ needs.version.outputs.tag }}-linux-x86_64.tar.gz
-            dist/LanTalk-${{ needs.version.outputs.tag }}-windows-x64.msi
-            dist/LanTalk-${{ needs.version.outputs.tag }}-windows-x64.zip
-          fail_on_unmatched_files: true
+      # All packages are in it: out of draft, and visible to everyone.
+      - name: Publish the release
+        run: |
+          gh release view "$TAG" --json assets --jq '.assets[].name' | tee "$RUNNER_TEMP/assets.txt"
+          for wanted in "LanTalk-$TAG-linux-x86_64.tar.gz" "LanTalk-$TAG-windows-x64.msi" "LanTalk-$TAG-windows-x64.zip"; do
+            grep -qxF "$wanted" "$RUNNER_TEMP/assets.txt" || { echo "::error::the release has no $wanted"; exit 1; }
+          done
+          if [[ "$TAG" == *-* ]]; then latest=--latest=false; else latest=--latest; fi
+          gh release edit "$TAG" --draft=false "$latest"

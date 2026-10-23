@@ -1,0 +1,5 @@
+# Lets actionlint check the self-hosted runner labels used by the workflows.
+self-hosted-runner:
+  labels:
+    - lantalk-linux
+    - lantalk-windows

@@ -170,3 +170,11 @@ version, commits and tags `vX.Y.Z`, and publishes:
 Pushing a `vX.Y.Z` tag yourself publishes that version without bumping it. The
 release notes come from the matching `CHANGELOG.md` section plus GitHub's
 generated notes.
+
+The workflow runs on two self-hosted runners registered for this repository:
+a Linux machine with podman (label `lantalk-linux`), which tests and builds
+inside the `packaging/ci/Containerfile` image, and a Windows machine (label
+`lantalk-windows`) that builds the MSI and ZIP. Register them with
+`packaging/ci/setup-linux-runner.sh` and `packaging/ci/setup-windows-runner.ps1`,
+using a token from
+`gh api -X POST repos/ablohme86/lantalk/actions/runners/registration-token -q .token`.

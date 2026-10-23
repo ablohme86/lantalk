@@ -4,6 +4,10 @@
 
 ### Changed
 
+- Releases are built on self-hosted runners: Linux in a podman container
+  (`packaging/ci`), Windows on a dedicated machine. Packages are uploaded
+  straight into a draft release that is published once all are present.
+
 - The app is renamed from LANChat to LANTalk, matching the repository. The
   executable is now `lantalk` and release files are named `LanTalk-...`. On
   first launch LANTalk copies the settings, history, and open tabs saved by
