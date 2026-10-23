@@ -89,6 +89,13 @@ MainWindow::MainWindow() {
   connect(&server_, &QTcpServer::newConnection, this,
           &MainWindow::acceptConnection);
   startDiscovery();
+  // Ollama servers on the network make Live Translate available; look again
+  // every few minutes.
+  ollamaScanTimer_.setInterval(5 * 60 * 1000);
+  connect(&ollamaScanTimer_, &QTimer::timeout, &ollamaDiscovery_,
+          &OllamaDiscovery::scan);
+  ollamaScanTimer_.start();
+  ollamaDiscovery_.scan();
   restoreOpenConnections();
 }
 
@@ -100,6 +107,7 @@ void MainWindow::showSettings() {
   dialog.save();
   startListening();
   announcePresence();
+  ollamaDiscovery_.scan();
   for (int index = 0; index < tabs_->count(); ++index) {
     static_cast<ChatTab *>(tabs_->widget(index))
         ->refreshTranslationAvailability();
@@ -549,6 +557,7 @@ ChatTab *MainWindow::createTab(ChatSession *session,
   auto *tab = new ChatTab(session, this);
   session->setParent(tab);
   tab->setReconnectEndpoint(reconnectAddress, reconnectPort);
+  tab->setOllamaDiscovery(&ollamaDiscovery_);
   connect(session, &ChatSession::mergedInto, this,
           [this, tab](ChatSession *existing) {
             const bool wasCurrent = tabs_->currentWidget() == tab;

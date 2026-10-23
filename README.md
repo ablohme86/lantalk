@@ -33,6 +33,14 @@ connection, including incoming ones: when a peer reconnects, or both sides
 connect at the same moment, the connections are merged into the existing tab
 and its history and state are kept.
 
+The GUI looks for Ollama servers on port 11434 on this computer and on the
+private subnets of its network cards (up to a /22 each) at startup, every five
+minutes, and after Settings are saved. Live Translate is offered when an
+Ollama server is configured or one was found; its dialog lists the servers
+found (plus the configured one), with a Rescan button and each server's
+models, next to the language choices. The chosen server and model become the
+Ollama settings.
+
 Live Translate languages are remembered per conversation. After a reconnect
 or an application restart, Live Translate turns itself back on as soon as the
 configured Ollama server is reachable and has the configured model; while the

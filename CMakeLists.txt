@@ -15,6 +15,8 @@ add_library(lantalk_lib STATIC
     appconfig.h
     ollamaclient.cpp
     ollamaclient.h
+    ollamadiscovery.cpp
+    ollamadiscovery.h
     messagetranslator.cpp
     messagetranslator.h
     translationrestorer.cpp

@@ -4,6 +4,7 @@
 #include "gui/chatinput.h"
 #include "gui/chatlog.h"
 #include "gui/dialogs.h"
+#include "ollamadiscovery.h"
 #include "protocol/chathistory.h"
 #include "protocol/chatsession.h"
 #include "protocol/quotedmessage.h"
@@ -522,8 +523,17 @@ void ChatTab::appendSystemMessage(const QString &message) {
   log_->appendNotice(message);
 }
 
+void ChatTab::setOllamaDiscovery(OllamaDiscovery *discovery) {
+  ollamaDiscovery_ = discovery;
+  connect(discovery, &OllamaDiscovery::serversChanged, this,
+          &ChatTab::refreshTranslationAvailability);
+  refreshTranslationAvailability();
+}
+
 void ChatTab::refreshTranslationAvailability() {
-  const auto available = isOllamaConfigured();
+  const auto available =
+      isOllamaConfigured() ||
+      (ollamaDiscovery_ && !ollamaDiscovery_->servers().isEmpty());
   if (!available && translateButton_->isChecked()) {
     const QSignalBlocker blocker(translateButton_);
     translateButton_->setChecked(false);
@@ -535,7 +545,7 @@ void ChatTab::refreshTranslationAvailability() {
 }
 
 void ChatTab::configureTranslation() {
-  TranslationDialog dialog(this);
+  TranslationDialog dialog(ollamaDiscovery_, this);
   const auto saved = translationRestorer_->savedPreference();
   if (!saved.myLanguage.isEmpty()) {
     dialog.setLanguages(saved.myLanguage, saved.peerLanguage);
@@ -543,6 +553,11 @@ void ChatTab::configureTranslation() {
     dialog.setLanguages(myLanguage_, peerLanguage_);
   }
   if (dialog.exec() == QDialog::Accepted) {
+    // The chosen server and model become the Ollama settings, as in the
+    // Settings dialog.
+    QSettings settings;
+    settings.setValue(QStringLiteral("ollama/url"), dialog.ollamaUrl());
+    settings.setValue(QStringLiteral("ollama/model"), dialog.ollamaModel());
     myLanguage_ = dialog.myLanguage();
     peerLanguage_ = dialog.peerLanguage();
     automaticTranslationRequest_ = false;

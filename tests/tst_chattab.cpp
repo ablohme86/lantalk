@@ -3,9 +3,13 @@
 #include "gui/chatinput.h"
 #include "gui/chatlog.h"
 #include "gui/chattab.h"
+#include "gui/dialogs.h"
+#include "ollamadiscovery.h"
 #include "translationrestorer.h"
 
 #include <QApplication>
+#include <QDialogButtonBox>
+#include <QComboBox>
 #include <QCheckBox>
 #include <QPlainTextEdit>
 #include <QClipboard>
@@ -338,6 +342,66 @@ private slots:
     QVERIFY(!wrapped->font().italic());
     Q_UNUSED(sent);
 
+  }
+
+  void liveTranslateAppearsWhenOllamaIsFound() {
+    FakeOllama ollama({QStringLiteral("translator")});
+    QVERIFY(ollama.listen());
+    OllamaDiscovery discovery;
+    discovery.setPort(ollama.port());
+    discovery.setCandidates({QHostAddress(QStringLiteral("127.0.0.1"))});
+
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    ChatTab tab(session);
+    session->setParent(&tab);
+    tab.setOllamaDiscovery(&discovery);
+    QPushButton *button = nullptr;
+    for (auto *candidate : tab.findChildren<QPushButton *>()) {
+      if (candidate->text() == QStringLiteral("Live Translate")) button = candidate;
+    }
+    QVERIFY(button);
+    QVERIFY(button->isHidden()); // nothing configured, nothing found yet
+
+    QSignalSpy finished(&discovery, &OllamaDiscovery::scanFinished);
+    discovery.scan();
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5000);
+    QVERIFY(!button->isHidden());
+  }
+
+  void translationDialogOffersFoundServers() {
+    FakeOllama ollama({QStringLiteral("translator:7b"), QStringLiteral("llama3")});
+    QVERIFY(ollama.listen());
+    OllamaDiscovery discovery;
+    discovery.setPort(ollama.port());
+    discovery.setCandidates({QHostAddress(QStringLiteral("127.0.0.1"))});
+    QSignalSpy finished(&discovery, &OllamaDiscovery::scanFinished);
+    discovery.scan();
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5000);
+
+    TranslationDialog dialog(&discovery);
+    // LANTALK_SCREENSHOT_DIALOG=<file.png> saves the dialog for a visual check.
+    const auto screenshot = qEnvironmentVariable("LANTALK_SCREENSHOT_DIALOG");
+    if (!screenshot.isEmpty()) {
+      dialog.show();
+      QTest::qWait(50);
+      dialog.grab().save(screenshot);
+    }
+    QCOMPARE(dialog.ollamaUrl(), QStringLiteral("http://127.0.0.1:%1").arg(ollama.port()));
+    QCOMPARE(dialog.ollamaModel(), QStringLiteral("translator:7b"));
+    const auto combos = dialog.findChildren<QComboBox *>();
+    QComboBox *models = nullptr;
+    for (auto *combo : combos) {
+      if (combo->findText(QStringLiteral("llama3")) >= 0) models = combo;
+    }
+    QVERIFY(models);
+    QCOMPARE(models->count(), 2);
+
+    auto *ok = dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok);
+    QVERIFY(ok->isEnabled());
+    models->setCurrentText(QString());
+    QVERIFY(!ok->isEnabled());
   }
 
   void savedTranslationResumesAndChecksButton() {

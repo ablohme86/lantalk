@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ollamadiscovery.h"
+
 #include <QDateTime>
 #include <QHash>
 #include <QHostAddress>
@@ -87,6 +89,8 @@ private:
   QComboBox *host_;
   QTabWidget *tabs_;
   QSystemTrayIcon *trayIcon_ = nullptr;
+  OllamaDiscovery ollamaDiscovery_;
+  QTimer ollamaScanTimer_;
   int unreadMessageCount_ = 0;
   // The conversation the last notification was about; clicking it opens it.
   QPointer<ChatTab> notifiedTab_;

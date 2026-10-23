@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- The GUI finds Ollama servers on port 11434 on this computer and on the
+  network cards' private subnets (up to a /22 each), at startup, every five
+  minutes, and after Settings are saved. The Live Translate button appears
+  when a server is found or configured, and its dialog offers the servers
+  found and their models, with a Rescan button, alongside the languages.
+
 ## v1.6.0 - 2026-10-23
 
 ### Changed

@@ -9,6 +9,7 @@
 class ChatSession;
 class QLabel;
 class ChatInput;
+class OllamaDiscovery;
 class QCheckBox;
 class QPlainTextEdit;
 class QVBoxLayout;
@@ -32,6 +33,9 @@ public:
   quint16 reconnectPort() const;
   void setReconnectEndpoint(const QString &address, quint16 port);
   void refreshTranslationAvailability();
+  // Ollama servers found on the network also make Live Translate available
+  // and can be picked in its dialog.
+  void setOllamaDiscovery(OllamaDiscovery *discovery);
   // Retries a disconnected conversation now instead of waiting for the timer.
   void reconnectNow();
   void closeConversation();
@@ -122,6 +126,7 @@ private:
   MessageTranslator outgoingTranslator_;
   MessageTranslator incomingTranslator_;
   TranslationRestorer *translationRestorer_;
+  OllamaDiscovery *ollamaDiscovery_ = nullptr;
   bool liveTranslate_ = false;
   bool automaticTranslationRequest_ = false;
   bool outgoingPending_ = false;
