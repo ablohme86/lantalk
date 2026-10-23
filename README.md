@@ -148,3 +148,23 @@ cmake --install build --config Release --prefix dist
 Use the Qt kit that matches the selected compiler (for example, an MSVC kit
 with Visual Studio or a MinGW kit with MinGW). The resulting `dist` directory
 can be copied to another compatible Windows computer.
+
+## Releases
+
+Releases are published on the repository's GitHub **Releases** page by the
+`Release` workflow. Start it from **Actions → Release → Run workflow** on the
+default branch and choose which part of the version to bump (`minor` by
+default). The workflow runs the unit tests, updates the version in
+`CMakeLists.txt`, moves the `Unreleased` changelog entries under the new
+version, commits and tags `vX.Y.Z`, and publishes:
+
+- `LanChat-vX.Y.Z-linux-x86_64.tar.gz`: extract it anywhere and run
+  `bin/lanchat`. Qt is bundled; the desktop GUI needs the X11 libraries
+  `libxcb-cursor0` and `libxkbcommon-x11-0` (on Wayland it runs through
+  XWayland).
+- `LanChat-vX.Y.Z-windows-x64.msi` and a portable
+  `LanChat-vX.Y.Z-windows-x64.zip`.
+
+Pushing a `vX.Y.Z` tag yourself publishes that version without bumping it. The
+release notes come from the matching `CHANGELOG.md` section plus GitHub's
+generated notes.

@@ -1,6 +1,19 @@
 name: Release
 
+# Run this workflow manually to bump the version (minor by default), tag it,
+# and publish a GitHub Release with a Linux tarball and Windows MSI/ZIP.
+# Pushing a vX.Y.Z tag yourself publishes that version without bumping.
 on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version part to bump
+        type: choice
+        options:
+          - minor
+          - patch
+          - major
+        default: minor
   push:
     tags:
       - "v*"
@@ -8,32 +21,146 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  QT_VERSION: "6.8.3"
+
 jobs:
-  windows-release:
-    runs-on: windows-2022
+  test:
+    runs-on: ubuntu-22.04
 
     steps:
       - name: Check out source
         uses: actions/checkout@v7
 
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl-dev libegl-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-render-util0 libxcb-image0 libxcb-shape0
+
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: "6.8.3"
-          arch: win64_msvc2022_64
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: Build
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+
+      - name: Run unit tests
+        run: ctest --test-dir build --output-on-failure
+
+  version:
+    needs: test
+    runs-on: ubuntu-22.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Bump version and push tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          if [ "$GITHUB_REF_NAME" != "${{ github.event.repository.default_branch }}" ]; then
+            echo "::error::Run the release from the default branch."
+            exit 1
+          fi
+          version="$(scripts/bump-version.sh "$BUMP")"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "Release v$version"
+          git tag -a "v$version" -m "LANChat v$version"
+          git push origin "HEAD:$GITHUB_REF_NAME" "v$version"
+          echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
 
       - name: Read release version
         id: version
-        shell: pwsh
         run: |
-          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$') {
-            throw "Release tags must use vMAJOR.MINOR.PATCH, optionally followed by a prerelease suffix."
-          }
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "value=$($Matches['version'])"
+          tag="${RELEASE_TAG:-$GITHUB_REF_NAME}"
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Release tags must use vMAJOR.MINOR.PATCH, optionally followed by a prerelease suffix."
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+
+  linux-package:
+    needs: version
+    # The oldest supported runner keeps the glibc requirement of the tarball low.
+    runs-on: ubuntu-22.04
+    env:
+      PACKAGE: LanChat-${{ needs.version.outputs.tag }}-linux-x86_64
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl-dev libegl-dev libxkbcommon-dev libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 libxcb-render-util0 libxcb-image0 libxcb-shape0
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          cache: true
+
+      - name: Build LANChat
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DLANCHAT_BUILD_TESTS=OFF
+          cmake --build build --parallel
+
+      - name: Create tarball
+        run: |
+          cmake --install build --prefix "dist/$PACKAGE"
+          test -x "dist/$PACKAGE/bin/lanchat"
+          cp README.md LICENSE CHANGELOG.md "dist/$PACKAGE/"
+          tar -C dist -czf "dist/$PACKAGE.tar.gz" "$PACKAGE"
+
+      - name: Upload tarball
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-package
+          path: dist/${{ env.PACKAGE }}.tar.gz
+          if-no-files-found: error
+
+  windows-package:
+    needs: version
+    runs-on: windows-2022
+    env:
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          arch: win64_msvc2022_64
+          cache: true
 
       - name: Configure Windows x64 build
         shell: pwsh
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" -DLANCHAT_BUILD_TESTS=OFF
 
       - name: Build LANChat
         run: cmake --build build --config Release --parallel
@@ -43,7 +170,7 @@ jobs:
         run: |
           $stageDir = Join-Path $env:RUNNER_TEMP 'lanchat-install'
           $appDir = Join-Path $env:GITHUB_WORKSPACE 'dist\windows'
-          $zipPath = Join-Path $env:GITHUB_WORKSPACE "dist\LanChat-$env:GITHUB_REF_NAME-windows-x64.zip"
+          $zipPath = Join-Path $env:GITHUB_WORKSPACE "dist\LanChat-$env:RELEASE_TAG-windows-x64.zip"
 
           cmake --install build --config Release --prefix $stageDir
           New-Item -ItemType Directory -Force -Path $appDir | Out-Null
@@ -64,16 +191,51 @@ jobs:
       - name: Build MSI installer
         shell: pwsh
         env:
-          PRODUCT_VERSION: ${{ steps.version.outputs.value }}
+          PRODUCT_VERSION: ${{ needs.version.outputs.version }}
         run: |
-          $msiPath = "dist\LanChat-$env:GITHUB_REF_NAME-windows-x64.msi"
+          $msiPath = "dist\LanChat-$env:RELEASE_TAG-windows-x64.msi"
           wix build -acceptEula wix7 -arch x64 -d "ProductVersion=$env:PRODUCT_VERSION" -o $msiPath installer\LanChat.wxs
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-packages
+          path: |
+            dist/LanChat-${{ needs.version.outputs.tag }}-windows-x64.msi
+            dist/LanChat-${{ needs.version.outputs.tag }}-windows-x64.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [version, linux-package, windows-package]
+    runs-on: ubuntu-22.04
+    env:
+      RELEASE_TAG: ${{ needs.version.outputs.tag }}
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Extract release notes
+        run: scripts/release-notes.sh "$RELEASE_TAG" > release-notes.md
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: LANChat ${{ needs.version.outputs.tag }}
+          body_path: release-notes.md
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(needs.version.outputs.tag, '-') }}
           files: |
-            dist/LanChat-${{ github.ref_name }}-windows-x64.msi
-            dist/LanChat-${{ github.ref_name }}-windows-x64.zip
+            dist/LanChat-${{ needs.version.outputs.tag }}-linux-x86_64.tar.gz
+            dist/LanChat-${{ needs.version.outputs.tag }}-windows-x64.msi
+            dist/LanChat-${{ needs.version.outputs.tag }}-windows-x64.zip
+          fail_on_unmatched_files: true

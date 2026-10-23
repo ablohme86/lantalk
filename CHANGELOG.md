@@ -22,8 +22,10 @@
   saved with the history and shown as `[HH:mm]` in both interfaces.
 - The Windows executable now embeds the LANChat app icon as a native Windows
   resource.
-- Pushing a `vX.Y.Z` tag now builds a Windows x64 release and publishes both a
-  portable ZIP and an MSI installer to a GitHub Release.
+- The Release workflow can be run manually to bump the minor (or patch/major)
+  version, tag it, run the unit tests, and publish a GitHub Release with a
+  Linux x86_64 tarball, a Windows MSI installer, and a portable Windows ZIP.
+  Pushing a `vX.Y.Z` tag publishes that version without bumping it.
 - GUI and TUI discovery now probe private IPv4 subnets with unicast UDP, so
   peers can be found without relying on broadcast delivery. Probes use the
   discovery port and peers advertise their TCP chat port (45454 by default).

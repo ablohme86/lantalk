@@ -53,6 +53,15 @@ set_target_properties(lanchat PROPERTIES
     MACOSX_BUNDLE TRUE
 )
 
+if(UNIX AND NOT APPLE)
+    # The Linux release tarball ships the Qt libraries it deploys next to the
+    # executable.
+    include(GNUInstallDirs)
+    set_target_properties(lanchat PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
+    )
+endif()
+
 if(WIN32)
     enable_language(RC)
     file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/lanchat.ico" LANCHAT_ICON_PATH)
