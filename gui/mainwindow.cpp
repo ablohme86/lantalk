@@ -5,6 +5,7 @@
 #include "gui/chattab.h"
 #include "gui/dialogs.h"
 #include "protocol/chatsession.h"
+#include "protocol/chattransport.h"
 #include "protocol/connectionregistry.h"
 #include "protocol/peerdiscovery.h"
 
@@ -85,10 +86,15 @@ MainWindow::MainWindow() {
     }
   });
   promptForNickname();
-  startListening();
   connect(&server_, &QTcpServer::newConnection, this,
           &MainWindow::acceptConnection);
-  startDiscovery();
+  connect(&central_, &CentralClient::incomingConnection, this,
+          &MainWindow::acceptRelayConnection);
+  connect(&central_, &CentralClient::peersChanged, this,
+          &MainWindow::refreshHostList);
+  connect(&central_, &CentralClient::stateChanged, this,
+          &MainWindow::updateCentralStatus);
+  applyNetworkMode();
   // Ollama servers on the network make Live Translate available; look again
   // every few minutes.
   ollamaScanTimer_.setInterval(5 * 60 * 1000);
@@ -105,13 +111,75 @@ void MainWindow::showSettings() {
     return;
   }
   dialog.save();
-  startListening();
-  announcePresence();
+  applyNetworkMode();
   ollamaDiscovery_.scan();
   for (int index = 0; index < tabs_->count(); ++index) {
     static_cast<ChatTab *>(tabs_->widget(index))
         ->refreshTranslationAvailability();
   }
+}
+
+MainWindow::~MainWindow() { ChatTransport::setFactory({}); }
+
+void MainWindow::applyNetworkMode() {
+  const QSettings settings;
+  const auto centralHost =
+      settings.value(QStringLiteral("network/centralHost")).toString().trimmed();
+  const auto nickname =
+      settings.value(QStringLiteral("profile/nickname"), QStringLiteral("Guest"))
+          .toString();
+  const auto listenPort =
+      quint16(settings.value(QStringLiteral("network/listenPort"), DefaultPort)
+                  .toUInt());
+  QString modeKey;
+  if (centralHost.isEmpty()) {
+    central_.stop();
+    ChatTransport::setFactory({});
+    startListening();
+    startDiscovery();
+    announcePresence();
+  } else {
+    server_.close();
+    stopDiscovery();
+    ChatTransport::setFactory(central_.transportFactory());
+    central_.start(centralHost, nickname, listenPort);
+    modeKey = QStringLiteral("%1\n%2\n%3")
+                  .arg(centralHost, nickname)
+                  .arg(listenPort);
+    updateCentralStatus();
+  }
+  refreshHostList();
+  const bool modeChanged = networkModeApplied_ && modeKey != networkModeKey_;
+  networkModeKey_ = modeKey;
+  networkModeApplied_ = true;
+  if (!modeChanged) return;
+  // Conversations move to the new route right away.
+  for (int index = 0; index < tabs_->count(); ++index) {
+    if (auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index))) {
+      tab->restartConnection();
+    }
+  }
+}
+
+void MainWindow::updateCentralStatus() {
+  if (!central_.isActive()) {
+    if (!central_.lastError().isEmpty()) {
+      statusBar()->showMessage(central_.lastError());
+    }
+    return;
+  }
+  if (central_.isReady()) {
+    statusBar()->showMessage(
+        QStringLiteral("Connected to central host %1").arg(central_.hostSpec()));
+  } else if (!central_.lastError().isEmpty()) {
+    statusBar()->showMessage(
+        QStringLiteral("Cannot reach central host %1: %2")
+            .arg(central_.hostSpec(), central_.lastError()));
+  } else {
+    statusBar()->showMessage(
+        QStringLiteral("Connecting to central host %1…").arg(central_.hostSpec()));
+  }
+  refreshHostList();
 }
 
 void MainWindow::showFontSizeDialog() {
@@ -266,20 +334,27 @@ void MainWindow::acceptConnection() {
   while (server_.hasPendingConnections()) {
     auto *socket = server_.nextPendingConnection();
     const auto port = discoveredPortForAddress(socket->peerAddress());
-    auto *session = new ChatSession(socket, this);
-    const auto address = session->peerAddress();
-    session->setRemoteEndpoint(address, port);
-    // The tab stays hidden until the handshake shows that this is a new
-    // conversation; a duplicate of an open one is merged into its tab.
-    auto *tab = createTab(session, address, port);
-    tab->hide();
-    connect(session, &ChatSession::peerIdentified, this, [this, tab] {
-      if (tabs_->indexOf(tab) < 0) showTab(tab, tab->title());
-    });
-    connect(session, &ChatSession::disconnected, tab, [this, tab] {
-      if (tabs_->indexOf(tab) < 0) tab->deleteLater();
-    });
+    adoptIncomingSession(new ChatSession(socket, this), port);
   }
+}
+
+void MainWindow::acceptRelayConnection(RelayTransport *transport) {
+  adoptIncomingSession(new ChatSession(transport, this), transport->peerPort());
+}
+
+void MainWindow::adoptIncomingSession(ChatSession *session, quint16 port) {
+  const auto address = session->peerAddress();
+  session->setRemoteEndpoint(address, port);
+  // The tab stays hidden until the handshake shows that this is a new
+  // conversation; a duplicate of an open one is merged into its tab.
+  auto *tab = createTab(session, address, port);
+  tab->hide();
+  connect(session, &ChatSession::peerIdentified, this, [this, tab] {
+    if (tabs_->indexOf(tab) < 0) showTab(tab, tab->title());
+  });
+  connect(session, &ChatSession::disconnected, tab, [this, tab] {
+    if (tabs_->indexOf(tab) < 0) tab->deleteLater();
+  });
 }
 
 void MainWindow::applyDarkMenuStyle() {
@@ -331,10 +406,10 @@ void MainWindow::connectToAddress(const QString &address, quint16 port,
     }
     return;
   }
-  auto *session = new ChatSession(new QTcpSocket(this), this);
+  auto *session = new ChatSession(ChatTransport::create(this), this);
   auto *tab = createTab(session, address, port);
   showTab(tab, QStringLiteral("Connecting to %1…").arg(address));
-  session->connectToHost(address, port);
+  session->connectToHost(address, port, nickname);
 }
 
 void MainWindow::startListening() {
@@ -354,6 +429,7 @@ void MainWindow::startListening() {
 }
 
 void MainWindow::startDiscovery() {
+  if (discoverySocket_.state() == QAbstractSocket::BoundState) return;
   if (!discoverySocket_.bind(QHostAddress::AnyIPv4, DiscoveryPort,
                              QUdpSocket::ShareAddress |
                                  QUdpSocket::ReuseAddressHint)) {
@@ -361,6 +437,13 @@ void MainWindow::startDiscovery() {
                                  .arg(discoverySocket_.errorString()));
     return;
   }
+  if (discoverySetUp_) {
+    discoveryTimer_.start();
+    subnetScanTimer_.start();
+    scanPrivateSubnets();
+    return;
+  }
+  discoverySetUp_ = true;
   connect(&discoverySocket_, &QUdpSocket::readyRead, this,
           &MainWindow::readDiscoveryDatagrams);
   discoveryTimer_.setInterval(2000);
@@ -387,7 +470,18 @@ void MainWindow::startDiscovery() {
   scanPrivateSubnets();
 }
 
+void MainWindow::stopDiscovery() {
+  discoveryTimer_.stop();
+  subnetScanTimer_.stop();
+  probeSendTimer_.stop();
+  discoverySettleTimer_.stop();
+  pendingDiscoveryProbes_.clear();
+  discoverySocket_.close();
+  discoveredHosts_.clear();
+}
+
 void MainWindow::announcePresence() {
+  if (discoverySocket_.state() != QAbstractSocket::BoundState) return;
   const auto nickname = escapeProtocolField(
       QSettings()
           .value(QStringLiteral("profile/nickname"), QStringLiteral("Guest"))
@@ -520,6 +614,14 @@ void MainWindow::sendDiscoveryProbeBatch() {
 void MainWindow::refreshHostList() {
   const auto currentText = host_->currentText();
   auto hosts = discoveredHosts_.values();
+  if (central_.isActive()) {
+    // The central host lists the clients connected to it instead.
+    hosts.clear();
+    for (const auto &peer : central_.peers()) {
+      hosts.append({peer.nickname, QHostAddress(peer.address), peer.port,
+                    QDateTime::currentDateTimeUtc()});
+    }
+  }
   std::sort(hosts.begin(), hosts.end(),
             [](const DiscoveredHost &left, const DiscoveredHost &right) {
               return left.nickname.localeAwareCompare(right.nickname) < 0;
@@ -527,10 +629,12 @@ void MainWindow::refreshHostList() {
   const QSignalBlocker blocker(host_);
   host_->clear();
   if (hosts.isEmpty()) {
+    const bool searching = central_.isActive() ? !central_.isReady()
+                                               : !initialDiscoveryScanComplete_;
     host_->setPlaceholderText(
-        initialDiscoveryScanComplete_
-            ? QStringLiteral("No LANTalk hosts found")
-            : QStringLiteral("Scanning for hosts..."));
+        !searching             ? QStringLiteral("No LANTalk hosts found")
+        : central_.isActive() ? QStringLiteral("Connecting to the central host...")
+                              : QStringLiteral("Scanning for hosts..."));
     return;
   }
   host_->addItem(QStringLiteral("Select a host to chat with"));
@@ -617,7 +721,8 @@ void MainWindow::restoreOpenConnections() {
         connection.value(QStringLiteral("port")).toUInt(&portIsValid);
     if (!address.trimmed().isEmpty() && portIsValid && port > 0 &&
         port <= 65535) {
-      connectToAddress(address, quint16(port));
+      connectToAddress(address, quint16(port),
+                       connection.value(QStringLiteral("nickname")).toString());
     }
   }
   persistOpenConnections();
@@ -634,6 +739,10 @@ void MainWindow::persistOpenConnections() {
     QVariantMap connection;
     connection.insert(QStringLiteral("address"), tab->reconnectAddress());
     connection.insert(QStringLiteral("port"), tab->reconnectPort());
+    // Tells clients behind the same address apart on a central host.
+    if (!tab->peerNickname().isEmpty()) {
+      connection.insert(QStringLiteral("nickname"), tab->peerNickname());
+    }
     openConnections.append(connection);
   }
   QSettings().setValue(QStringLiteral("connections/openTabs"),

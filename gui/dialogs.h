@@ -46,5 +46,6 @@ private:
   QLineEdit *ollamaUrl_;
   QLineEdit *ollamaModel_;
   QSpinBox *listenPort_;
+  QLineEdit *centralHost_;
   QCheckBox *notifications_;
 };

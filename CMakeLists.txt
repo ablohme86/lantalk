@@ -10,6 +10,19 @@ option(LANTALK_BUILD_TESTS "Build the LANTalk unit tests" ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
+# The central relay service runs headless on a server, so it needs only
+# QtCore and QtNetwork.
+add_library(lantalk_central_lib STATIC
+    central/centralserver.cpp
+    central/centralserver.h
+    protocol/centralprotocol.h
+    protocol/conversationidentity.cpp
+    protocol/conversationidentity.h
+)
+target_include_directories(lantalk_central_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(lantalk_central_lib PUBLIC LANTALK_VERSION="${PROJECT_VERSION}")
+target_link_libraries(lantalk_central_lib PUBLIC Qt6::Network)
+
 # Everything except main.cpp, so the unit tests can link the same code.
 add_library(lantalk_lib STATIC
     appconfig.h
@@ -25,10 +38,13 @@ add_library(lantalk_lib STATIC
     protocol/chathistory.h
     protocol/chatsession.cpp
     protocol/chatsession.h
+    protocol/chattransport.cpp
+    protocol/chattransport.h
+    protocol/centralclient.cpp
+    protocol/centralclient.h
+    protocol/centralprotocol.h
     protocol/connectionregistry.cpp
     protocol/connectionregistry.h
-    protocol/conversationidentity.cpp
-    protocol/conversationidentity.h
     protocol/peerdiscovery.h
     protocol/quotedmessage.cpp
     protocol/quotedmessage.h
@@ -52,7 +68,7 @@ target_include_directories(lantalk_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # The version shown in the window title; scripts/bump-version.sh updates it.
 target_compile_definitions(lantalk_lib PUBLIC LANTALK_VERSION="${PROJECT_VERSION}")
 
-target_link_libraries(lantalk_lib PUBLIC Qt6::Widgets Qt6::Network)
+target_link_libraries(lantalk_lib PUBLIC lantalk_central_lib Qt6::Widgets Qt6::Network)
 
 qt_add_executable(lantalk
     main.cpp
@@ -81,7 +97,19 @@ if(WIN32)
     target_sources(lantalk PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/lantalk.rc)
 endif()
 
+qt_add_executable(lantalk-centralized-service
+    central/main.cpp
+)
+target_link_libraries(lantalk-centralized-service PRIVATE lantalk_central_lib)
+set_target_properties(lantalk-centralized-service PROPERTIES MACOSX_BUNDLE FALSE)
+if(UNIX AND NOT APPLE)
+    set_target_properties(lantalk-centralized-service PROPERTIES
+        INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
+    )
+endif()
+
 install(TARGETS lantalk BUNDLE DESTINATION . RUNTIME DESTINATION bin)
+install(TARGETS lantalk-centralized-service RUNTIME DESTINATION bin)
 
 qt_generate_deploy_app_script(
     TARGET lantalk

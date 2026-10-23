@@ -93,7 +93,7 @@ In the TUI, a reconnect from the same IP and nickname resumes the existing
 disconnected tab; press `Ctrl-W` to close and disconnect the active chat.
 The TUI has an MS-DOS Edit style menu bar. Press `Alt-C` for the Chat menu
 (connect, close the active chat, or quit) and `Alt-S` for Settings (nickname,
-Ollama URL/model, and listening port). Menus drop down below the bar; use the
+Ollama URL/model, listening port, and central host). Menus drop down below the bar; use the
 arrow keys or the underlined letter to pick an item. Menu confirmations use
 keyboard-friendly ASCII dialogs; `Esc` cancels.
 Typing and sending chat messages works while the chat area has focus. The
@@ -118,6 +118,76 @@ clicked. Received attachments are kept in LANTalk's operating-system cache
 until that conversation is closed. Use the `Save as...` link beside any
 attachment to copy it to a chosen location. File transfers show progress in the
 chat input, and launching LANTalk again activates the running instance.
+
+## Central host
+
+LANTalk normally talks directly to peers on the LAN. When the computers
+cannot reach each other directly (different networks, VPNs, firewalls), run
+`lantalk-centralized-service` on a server that all of them can reach and
+enter its IP address or DNS name, optionally with `:port`, under
+**Settings → General → Central host** (TUI: **Settings → Central Host**).
+In central mode LANTalk:
+
+- stops listening on its TCP port and stops LAN discovery;
+- lists the clients connected to the central host in the host selector
+  (`HOSTS ON NETWORK` in the TUI), shown as `Nickname (IP address)` with the
+  address the central host sees;
+- sends every conversation through the central host. Everything else works
+  as before: tabs, history, reconnects, typing, quotes, files, and Live
+  Translate, which still translates locally with your own Ollama server.
+
+Leave the field empty to go back to direct LAN chat. Changing it moves open
+conversations to the new route at once. Conversations are identified by the
+peer's address and nickname, so the history of a peer seen through a
+central host is kept apart from the history of the same peer on the LAN if
+the addresses differ.
+
+The service is a separate console program built and installed next to
+`lantalk` (`bin/lantalk-centralized-service`, Qt Core and Network only). It
+runs on any Linux or Windows server:
+
+```sh
+lantalk-centralized-service --port 45455            # all addresses
+lantalk-centralized-service --listen 10.0.0.5 -p 45455
+```
+
+It logs sign-ins and sign-outs, never message contents. A systemd unit
+might look like:
+
+```ini
+[Unit]
+Description=LANTalk central host
+After=network-online.target
+
+[Service]
+ExecStart=/opt/lantalk/bin/lantalk-centralized-service --port 45455
+DynamicUser=yes
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The service has no authentication or encryption. Anyone who can reach its
+port can sign in under any nickname and see who is online, and traffic
+crosses the network in clear text just like LAN chat. Run it on a trusted
+network or behind a VPN.
+
+### Central protocol
+
+Clients and the service exchange `CENTRAL_` lines over TCP. A client signs in
+with `CENTRAL_HELLO <version> <nickname> <port>` and receives one
+`CENTRAL_PEER <id> <nickname> <address> <port>` per connected client
+followed by `CENTRAL_WELCOME <id> <address>`. After that the service reports
+`CENTRAL_PEER` and `CENTRAL_PEER_GONE <id>` as clients come and go.
+`CENTRAL_OPEN <channel> <peer id>` opens a conversation (the peer gets
+`CENTRAL_INCOMING <channel> <id>` and the opener `CENTRAL_OPENED <channel>`).
+`CENTRAL_DATA <channel> <line>` carries one unchanged LANCHAT PROTOCOL line,
+and `CENTRAL_CLOSE <channel> [reason]` ends it. Nicknames are base64url
+encoded. Clients send `CENTRAL_PING` every 30 seconds, and either side drops
+a connection that is silent for 90 seconds. A new sign-in with the same
+address and nickname replaces the old one, which receives
+`CENTRAL_REPLACED`.
 
 ## Protocol extensions
 
@@ -144,6 +214,11 @@ the sender's side and never sent.
 
 - `protocol/chatsession.*` implements the TCP LANCHAT protocol, file
   transfers, typing notifications, and Live Translate negotiation.
+- `protocol/chattransport.*` is the byte stream a session runs over (direct
+  TCP or a relayed channel); `protocol/centralclient.*` connects to a
+  central host and relays channels through it, and
+  `protocol/centralprotocol.h` holds what client and service share.
+- `central/` is `lantalk-centralized-service`.
 - `protocol/connectionregistry.*` enforces one connection per peer, and
   `protocol/conversationidentity.*` defines how peers are compared.
 - `translationrestorer.*` stores Live Translate languages per conversation and

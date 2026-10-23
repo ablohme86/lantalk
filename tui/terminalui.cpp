@@ -2,6 +2,8 @@
 
 #include "appconfig.h"
 #include "protocol/chathistory.h"
+#include "protocol/centralprotocol.h"
+#include "protocol/chattransport.h"
 #include "protocol/peerdiscovery.h"
 #include "protocol/chatsession.h"
 #include "protocol/connectionregistry.h"
@@ -83,6 +85,7 @@ QList<MenuEntry> menuEntries(int menu)
     return {{QStringLiteral("&Nickname..."), {}},
             {QStringLiteral("&Ollama Settings..."), {}},
             {QStringLiteral("&Listening Port..."), {}},
+            {QStringLiteral("&Central Host..."), {}},
             {QStringLiteral("&Back"), QStringLiteral("Esc")}};
 }
 
@@ -136,9 +139,13 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
     configureNickname();
     ansi_ = isTerminal();
     configureTerminal();
-    startListening();
     connect(&server_, &QTcpServer::newConnection, this, &TerminalUi::acceptConnection);
-    startDiscovery();
+    connect(&central_, &CentralClient::incomingConnection, this, &TerminalUi::acceptRelayConnection);
+    connect(&central_, &CentralClient::peersChanged, this, [this] {
+        if (ansi_) redraw();
+    });
+    connect(&central_, &CentralClient::stateChanged, this, &TerminalUi::reportCentralState);
+    applyNetworkMode();
 
 #ifdef Q_OS_UNIX
     auto *inputNotifier = new QSocketNotifier(STDIN_FILENO, QSocketNotifier::Read, this);
@@ -165,7 +172,58 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
 
 TerminalUi::~TerminalUi()
 {
+    ChatTransport::setFactory({});
     restoreTerminal();
+}
+
+void TerminalUi::applyNetworkMode()
+{
+    const QSettings settings;
+    const auto centralHost = settings.value(QStringLiteral("network/centralHost")).toString().trimmed();
+    const auto listenPort = quint16(settings.value(QStringLiteral("network/listenPort"), DefaultPort).toUInt());
+    QString modeKey;
+    if (centralHost.isEmpty()) {
+        central_.stop();
+        ChatTransport::setFactory({});
+        startListening();
+        startDiscovery();
+        announcePresence();
+    } else {
+        server_.close();
+        stopDiscovery();
+        ChatTransport::setFactory(central_.transportFactory());
+        central_.start(centralHost, nickname(), listenPort);
+        modeKey = QStringLiteral("%1\n%2\n%3").arg(centralHost, nickname()).arg(listenPort);
+    }
+    const bool modeChanged = networkModeApplied_ && modeKey != networkModeKey_;
+    networkModeKey_ = modeKey;
+    networkModeApplied_ = true;
+    if (!modeChanged) return;
+    // Open conversations move to the new route right away.
+    for (const auto &conversation : std::as_const(conversations_)) {
+        if (conversation.disconnected) continue;
+        auto *session = conversation.session;
+        const auto address = session->remoteHost().isEmpty() ? session->peerAddress() : session->remoteHost();
+        if (!address.isEmpty()) {
+            session->reconnectToHost(address, session->remotePort() ? session->remotePort() : DefaultPort);
+        }
+    }
+}
+
+void TerminalUi::reportCentralState()
+{
+    if (!central_.isActive()) {
+        if (!central_.lastError().isEmpty()) setStatus(central_.lastError());
+        return;
+    }
+    if (central_.isReady()) {
+        setStatus(QStringLiteral("Connected to central host %1.").arg(central_.hostSpec()));
+    } else if (!central_.lastError().isEmpty()) {
+        setStatus(QStringLiteral("Cannot reach central host %1: %2")
+                      .arg(central_.hostSpec(), central_.lastError()));
+    } else {
+        setStatus(QStringLiteral("Connecting to central host %1...").arg(central_.hostSpec()));
+    }
 }
 
 void TerminalUi::activateFromAnotherLaunch()
@@ -230,6 +288,7 @@ void TerminalUi::restoreTerminal()
 
 void TerminalUi::startListening()
 {
+    if (server_.isListening()) return;
     const quint16 port = QSettings().value(QStringLiteral("network/listenPort"), DefaultPort).toUInt();
     if (!server_.listen(QHostAddress::Any, port)) {
         print(QStringLiteral("Cannot listen on port %1: %2").arg(port).arg(server_.errorString()));
@@ -240,11 +299,19 @@ void TerminalUi::startListening()
 
 void TerminalUi::startDiscovery()
 {
+    if (discoverySocket_.state() == QAbstractSocket::BoundState) return;
     if (!discoverySocket_.bind(QHostAddress::AnyIPv4, DiscoveryPort,
                                QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
         print(QStringLiteral("LAN discovery unavailable: %1").arg(discoverySocket_.errorString()));
         return;
     }
+    if (discoverySetUp_) {
+        discoveryTimer_.start();
+        subnetScanTimer_.start();
+        scanPrivateSubnets();
+        return;
+    }
+    discoverySetUp_ = true;
     connect(&discoverySocket_, &QUdpSocket::readyRead, this, &TerminalUi::readDiscoveryDatagrams);
     discoveryTimer_.setInterval(2000);
     connect(&discoveryTimer_, &QTimer::timeout, this, &TerminalUi::announcePresence);
@@ -262,8 +329,19 @@ void TerminalUi::startDiscovery()
     scanPrivateSubnets();
 }
 
+void TerminalUi::stopDiscovery()
+{
+    discoveryTimer_.stop();
+    subnetScanTimer_.stop();
+    probeSendTimer_.stop();
+    pendingDiscoveryProbes_.clear();
+    discoverySocket_.close();
+    discoveredHosts_.clear();
+}
+
 void TerminalUi::announcePresence()
 {
+    if (discoverySocket_.state() != QAbstractSocket::BoundState) return;
     const auto encodedNickname = nickname().toUtf8().toBase64(QByteArray::Base64UrlEncoding);
     const quint16 port = QSettings().value(QStringLiteral("network/listenPort"), DefaultPort).toUInt();
     const QByteArray announcement = QStringLiteral("LANCHAT_DISCOVER %1 %2 %3")
@@ -668,6 +746,7 @@ void TerminalUi::handleCommand(const QString &command)
         }
         QSettings().setValue(QStringLiteral("profile/nickname"), newNickname);
         announcePresence();
+        applyNetworkMode();
         print(QStringLiteral("Nickname changed to %1. New connections will use it.").arg(newNickname));
     } else if (name == QStringLiteral("/translate")) {
         if (currentConversation_ < 0 || currentConversation_ >= conversations_.size()) {
@@ -775,7 +854,12 @@ void TerminalUi::activateMenuItem()
         } else if (selectedAction_ == 2) {
             openDialog(Dialog::ListenPort, QStringLiteral("Listening Port"),
                        QStringLiteral("TCP port (1-65535)"),
-                       QString::number(server_.serverPort() ? server_.serverPort() : DefaultPort));
+                       QString::number(server_.serverPort() ? server_.serverPort()
+                                                            : QSettings().value(QStringLiteral("network/listenPort"), DefaultPort).toUInt()));
+        } else if (selectedAction_ == 3) {
+            openDialog(Dialog::CentralHost, QStringLiteral("Central Host"),
+                       QStringLiteral("host[:port], empty for LAN"),
+                       QSettings().value(QStringLiteral("network/centralHost")).toString());
         } else {
             openMenu_ = Menu::None;
             focus_ = Focus::Chat;
@@ -845,6 +929,7 @@ void TerminalUi::acceptDialog()
         }
         QSettings().setValue(QStringLiteral("profile/nickname"), name);
         announcePresence();
+        applyNetworkMode();
         status_ = QStringLiteral("Nickname changed to %1.").arg(name);
     } else if (dialog == Dialog::OllamaUrl) {
         QSettings().setValue(QStringLiteral("ollama/url"), value);
@@ -863,12 +948,29 @@ void TerminalUi::acceptDialog()
             return;
         }
         setListenPort(port);
+    } else if (dialog == Dialog::CentralHost) {
+        if (!value.isEmpty() && !CentralProtocol::parseHostSpec(value, nullptr, nullptr)) {
+            status_ = QStringLiteral("Enter a host name or address, optionally with :port.");
+            return;
+        }
+        QSettings().setValue(QStringLiteral("network/centralHost"), value);
+        dialog_ = Dialog::None;
+        applyNetworkMode();
+        if (value.isEmpty()) status_ = QStringLiteral("Central host removed; chatting directly on the LAN.");
+        return;
     }
     dialog_ = Dialog::None;
 }
 
 void TerminalUi::setListenPort(quint16 port)
 {
+    if (central_.isActive()) {
+        // Nothing listens while a central host relays the conversations.
+        QSettings().setValue(QStringLiteral("network/listenPort"), port);
+        applyNetworkMode();
+        status_ = QStringLiteral("Listening port set to %1.").arg(port);
+        return;
+    }
     if (server_.serverPort() != port) {
         const quint16 previousPort = server_.serverPort();
         QTcpServer probe;
@@ -912,31 +1014,40 @@ void TerminalUi::connectToAddress(const QString &address, quint16 port, const QS
         syncLocalTyping();
         return;
     }
-    auto *session = new ChatSession(new QTcpSocket(this), this);
+    auto *session = new ChatSession(ChatTransport::create(this), this);
     addSession(session, QStringLiteral("Connecting to %1:%2").arg(address).arg(port));
-    session->connectToHost(address, port);
+    session->connectToHost(address, port, nickname);
 }
 
 void TerminalUi::acceptConnection()
 {
     while (server_.hasPendingConnections()) {
-        // Incoming conversations get a tab once the handshake shows they do
-        // not duplicate an open one; duplicates are merged into that tab.
-        auto *session = new ChatSession(server_.nextPendingConnection(), this);
-        session->setRemoteEndpoint(session->peerAddress(), 0);
-        connect(session, &ChatSession::peerIdentified, this, [this, session] {
-            if (conversationIndex(session) >= 0) return;
-            addSession(session, QStringLiteral("Incoming connection"));
-            conversationIdentified(session);
-        });
-        connect(session, &ChatSession::mergedInto, this, [this, session] {
-            if (conversationIndex(session) < 0) session->deleteLater();
-        });
-        connect(session, &ChatSession::disconnected, this, [this, session] {
-            if (conversationIndex(session) < 0) session->deleteLater();
-        });
-        session->beginHandshake(nickname());
+        adoptIncomingSession(new ChatSession(server_.nextPendingConnection(), this), 0);
     }
+}
+
+void TerminalUi::acceptRelayConnection(RelayTransport *transport)
+{
+    adoptIncomingSession(new ChatSession(transport, this), transport->peerPort());
+}
+
+void TerminalUi::adoptIncomingSession(ChatSession *session, quint16 port)
+{
+    // Incoming conversations get a tab once the handshake shows they do not
+    // duplicate an open one; duplicates are merged into that tab.
+    session->setRemoteEndpoint(session->peerAddress(), port);
+    connect(session, &ChatSession::peerIdentified, this, [this, session] {
+        if (conversationIndex(session) >= 0) return;
+        addSession(session, QStringLiteral("Incoming connection"));
+        conversationIdentified(session);
+    });
+    connect(session, &ChatSession::mergedInto, this, [this, session] {
+        if (conversationIndex(session) < 0) session->deleteLater();
+    });
+    connect(session, &ChatSession::disconnected, this, [this, session] {
+        if (conversationIndex(session) < 0) session->deleteLater();
+    });
+    session->beginHandshake(nickname());
 }
 
 void TerminalUi::addSession(ChatSession *session, const QString &title)
@@ -1286,6 +1397,13 @@ bool TerminalUi::currentConversationDisconnected() const
 QList<TerminalUi::DiscoveredHost> TerminalUi::sortedHosts() const
 {
     auto hosts = discoveredHosts_.values();
+    if (central_.isActive()) {
+        // The central host lists the clients connected to it instead.
+        hosts.clear();
+        for (const auto &peer : central_.peers()) {
+            hosts.append({peer.nickname, QHostAddress(peer.address), peer.port, QDateTime::currentDateTimeUtc()});
+        }
+    }
     std::sort(hosts.begin(), hosts.end(), [](const DiscoveredHost &a, const DiscoveredHost &b) {
         return a.nickname.localeAwareCompare(b.nickname) < 0;
     });
@@ -1472,7 +1590,10 @@ void TerminalUi::redraw()
         else if (row - 1 < hosts.size()) {
             const auto &host = hosts.at(row - 1);
             left = QStringLiteral("│%1 %2").arg(row - 1 == selectedHost_ ? u'>' : u' ').arg(host.nickname);
-        } else if (row == hosts.size() + 1 && hosts.isEmpty()) left = QStringLiteral("│ (discovering...)");
+        } else if (row == hosts.size() + 1 && hosts.isEmpty()) {
+            left = central_.isActive() && !central_.isReady() ? QStringLiteral("│ (connecting...)")
+                                                              : QStringLiteral("│ (discovering...)");
+        }
         if (row == 0) {
             if (conversations_.isEmpty()) {
                 right = QStringLiteral("── CHAT");

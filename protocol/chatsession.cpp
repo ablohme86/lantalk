@@ -1,6 +1,8 @@
 #include "protocol/chatsession.h"
 
 #include "appconfig.h"
+#include "protocol/centralprotocol.h"
+#include "protocol/chattransport.h"
 #include "protocol/connectionregistry.h"
 
 #include <QDir>
@@ -17,36 +19,21 @@
 namespace {
 
 QString formatPeerAddress(const QHostAddress &address) {
-  if (address.isNull()) return {};
-  if (address.protocol() == QAbstractSocket::IPv4Protocol) {
-    return address.toString();
-  }
-  if (address.protocol() != QAbstractSocket::IPv6Protocol) {
-    return address.toString();
-  }
-
-  const auto ipv6 = address.toIPv6Address();
-  bool isIpv4Mapped = ipv6[10] == 0xff && ipv6[11] == 0xff;
-  for (int index = 0; index < 10 && isIpv4Mapped; ++index) {
-    isIpv4Mapped = ipv6[index] == 0;
-  }
-  if (!isIpv4Mapped) return address.toString();
-
-  return QStringLiteral("%1.%2.%3.%4")
-      .arg(ipv6[12])
-      .arg(ipv6[13])
-      .arg(ipv6[14])
-      .arg(ipv6[15]);
+  return CentralProtocol::formatAddress(address);
 }
 
 } // namespace
 
 ChatSession::ChatSession(QTcpSocket *socket, QObject *parent,
                          ConnectionRegistry *registry)
+    : ChatSession(new TcpTransport(socket), parent, registry) {}
+
+ChatSession::ChatSession(ChatTransport *transport, QObject *parent,
+                         ConnectionRegistry *registry)
     : QObject(parent),
       registry_(registry ? registry : ConnectionRegistry::shared()),
-      socket_(socket) {
-  peerAddress_ = formatPeerAddress(socket_->peerAddress());
+      transport_(transport) {
+  peerAddress_ = transport_->peerAddress();
   outgoingFilePump_.setSingleShot(true);
   connect(&outgoingFilePump_, &QTimer::timeout, this,
           &ChatSession::sendNextFileChunk);
@@ -69,30 +56,30 @@ ChatSession::ChatSession(QTcpSocket *socket, QObject *parent,
 }
 
 void ChatSession::setupSocket() {
-  socket_->setParent(this);
-  connect(socket_, &QTcpSocket::connected, this, [this] {
-    peerAddress_ = formatPeerAddress(socket_->peerAddress());
+  transport_->setParent(this);
+  connect(transport_, &ChatTransport::connected, this, [this] {
+    const auto address = transport_->peerAddress();
+    if (!address.isEmpty()) peerAddress_ = address;
     if (!nickname_.isEmpty() && !handshakeComplete_) {
       sendLine(QStringLiteral("NICKNAME %1").arg(nickname_));
     }
   });
-  connect(socket_, &QTcpSocket::readyRead, this, &ChatSession::readData);
-  connect(socket_, &QTcpSocket::bytesWritten, this, [this](qint64) {
-    if (outgoingFile_ && socket_->bytesToWrite() < 128 * 1024 &&
+  connect(transport_, &ChatTransport::readyRead, this, &ChatSession::readData);
+  connect(transport_, &ChatTransport::bytesWritten, this, [this](qint64) {
+    if (outgoingFile_ && transport_->bytesToWrite() < 128 * 1024 &&
         !outgoingFilePump_.isActive()) {
       outgoingFilePump_.start(0);
     }
   });
-  connect(socket_, &QTcpSocket::disconnected, this, [this] {
+  connect(transport_, &ChatTransport::disconnected, this, [this] {
     notifyDisconnected();
   });
-  connect(socket_, &QTcpSocket::errorOccurred, this,
-          [this](QAbstractSocket::SocketError) {
-            emit statusChanged(socket_->errorString());
-            if (socket_->state() == QAbstractSocket::UnconnectedState) {
-              notifyDisconnected();
-            }
-          });
+  connect(transport_, &ChatTransport::errorOccurred, this, [this] {
+    emit statusChanged(transport_->errorString());
+    if (transport_->state() == ChatTransport::State::Unconnected) {
+      notifyDisconnected();
+    }
+  });
 }
 
 ChatSession::~ChatSession() {
@@ -108,20 +95,24 @@ ChatSession::~ChatSession() {
 
 void ChatSession::beginHandshake(const QString &nickname) {
   nickname_ = escapeProtocolField(nickname);
-  if (socket_->state() == QAbstractSocket::ConnectedState &&
+  if (transport_->state() == ChatTransport::State::Connected &&
       !handshakeComplete_) {
     sendLine(QStringLiteral("NICKNAME %1").arg(nickname_));
   }
 }
 
-void ChatSession::connectToHost(const QString &address, quint16 port) {
+void ChatSession::connectToHost(const QString &address, quint16 port,
+                                const QString &peerNameHint) {
   closed_ = false;
   outgoing_ = true;
   remoteHost_ = address.trimmed();
   remotePort_ = port;
+  if (!peerNameHint.trimmed().isEmpty()) peerNameHint_ = peerNameHint.trimmed();
   const auto requestedAddress = formatPeerAddress(QHostAddress(remoteHost_));
   if (!requestedAddress.isEmpty()) peerAddress_ = requestedAddress;
-  socket_->connectToHost(remoteHost_, port);
+  transport_->connectToHost(remoteHost_, port,
+                            identityName_.isEmpty() ? peerNameHint_
+                                                    : identityName_);
 }
 
 void ChatSession::reconnectToHost(const QString &address, quint16 port) {
@@ -129,14 +120,19 @@ void ChatSession::reconnectToHost(const QString &address, quint16 port) {
     return;
   }
 
+  // Whoever shows this conversation learns that the current connection, if
+  // any, is gone (e.g. when the network mode changes).
+  if (!disconnectNotified_ && (handshakeComplete_ || isConnected())) {
+    notifyDisconnected();
+  }
   cancelOutgoingFiles();
-  auto *oldSocket = socket_;
-  disconnect(oldSocket, nullptr, this, nullptr);
-  oldSocket->abort();
-  oldSocket->deleteLater();
+  auto *oldTransport = transport_;
+  disconnect(oldTransport, nullptr, this, nullptr);
+  oldTransport->abort();
+  oldTransport->deleteLater();
   resetConnectionState();
 
-  socket_ = new QTcpSocket(this);
+  transport_ = ChatTransport::create(this);
   setupSocket();
   connectToHost(address, port);
 }
@@ -164,10 +160,10 @@ void ChatSession::closeConnection() {
   stopLocalTyping();
   closed_ = true;
   cancelOutgoingFiles();
-  if (socket_->state() == QAbstractSocket::ConnectedState) {
-    socket_->disconnectFromHost();
+  if (transport_->state() == ChatTransport::State::Connected) {
+    transport_->disconnectFromHost();
   } else {
-    socket_->abort();
+    transport_->abort();
   }
 }
 
@@ -283,7 +279,7 @@ void ChatSession::sendNextFileChunk() {
   if (!outgoingFile_) {
     return;
   }
-  if (socket_->state() != QAbstractSocket::ConnectedState) {
+  if (transport_->state() != ChatTransport::State::Connected) {
     cancelOutgoingFiles();
     return;
   }
@@ -308,7 +304,7 @@ void ChatSession::sendNextFileChunk() {
     return;
   }
 
-  if (socket_->bytesToWrite() >= 256 * 1024) {
+  if (transport_->bytesToWrite() >= 256 * 1024) {
     return;
   }
   const auto chunk = outgoingFile_->read(16 * 1024);
@@ -456,15 +452,15 @@ void ChatSession::resetTypingState() {
 QString ChatSession::peerName() const { return peerName_; }
 QString ChatSession::identityName() const { return identityName_; }
 QString ChatSession::peerAddress() const {
-  const auto currentAddress = formatPeerAddress(socket_->peerAddress());
+  const auto currentAddress = transport_->peerAddress();
   return currentAddress.isEmpty() ? peerAddress_ : currentAddress;
 }
-quint16 ChatSession::peerPort() const { return socket_->peerPort(); }
+quint16 ChatSession::peerPort() const { return transport_->peerPort(); }
 QString ChatSession::remoteHost() const { return remoteHost_; }
 quint16 ChatSession::remotePort() const { return remotePort_; }
 
 bool ChatSession::isConnected() const {
-  return socket_->state() == QAbstractSocket::ConnectedState;
+  return transport_->state() == ChatTransport::State::Connected;
 }
 
 bool ChatSession::isHandshakeComplete() const { return handshakeComplete_; }
@@ -475,31 +471,24 @@ qint64 ChatSession::handshakeAgeMs() const {
   return handshakeClock_.isValid() ? handshakeClock_.elapsed() : -1;
 }
 
-// Both ends of a TCP connection derive the same key for it (initiator
-// endpoint first), so peers resolving a simultaneous-connect race agree on
-// which connection survives.
+// Both ends of a connection derive the same key for it, so peers resolving a
+// simultaneous-connect race agree on which connection survives.
 QString ChatSession::connectionKey() const {
-  const auto local = QStringLiteral("%1:%2")
-                         .arg(formatPeerAddress(socket_->localAddress()))
-                         .arg(socket_->localPort());
-  const auto remote = QStringLiteral("%1:%2")
-                          .arg(formatPeerAddress(socket_->peerAddress()))
-                          .arg(socket_->peerPort());
-  return outgoing_ ? local + u'>' + remote : remote + u'>' + local;
+  return transport_->connectionKey(outgoing_);
 }
 
 void ChatSession::adoptConnection(ChatSession *duplicate) {
   if (handshakeComplete_ && !disconnectNotified_) notifyDisconnected();
   cancelOutgoingFiles();
-  auto *oldSocket = socket_;
-  disconnect(oldSocket, nullptr, this, nullptr);
-  oldSocket->abort();
-  oldSocket->deleteLater();
+  auto *oldTransport = transport_;
+  disconnect(oldTransport, nullptr, this, nullptr);
+  oldTransport->abort();
+  oldTransport->deleteLater();
   resetConnectionState();
 
-  socket_ = duplicate->socket_;
-  disconnect(socket_, nullptr, duplicate, nullptr);
-  duplicate->socket_ = new QTcpSocket(duplicate);
+  transport_ = duplicate->transport_;
+  disconnect(transport_, nullptr, duplicate, nullptr);
+  duplicate->transport_ = new TcpTransport(new QTcpSocket, duplicate);
   buffer_ = std::exchange(duplicate->buffer_, {});
   outgoing_ = duplicate->outgoing_;
   if (remoteHost_.isEmpty() || remotePort_ == 0) {
@@ -520,7 +509,7 @@ void ChatSession::adoptConnection(ChatSession *duplicate) {
   emit peerIdentified(peerName_);
   emit statusChanged(QStringLiteral("Connected to %1").arg(peerName_));
   emit duplicate->mergedInto(this);
-  if (!buffer_.isEmpty() || socket_->bytesAvailable() > 0) {
+  if (!buffer_.isEmpty() || transport_->bytesAvailable() > 0) {
     QMetaObject::invokeMethod(this, &ChatSession::readData,
                               Qt::QueuedConnection);
   }
@@ -529,19 +518,19 @@ void ChatSession::adoptConnection(ChatSession *duplicate) {
 void ChatSession::retireAsDuplicate(ChatSession *existing) {
   merged_ = true;
   cancelOutgoingFiles();
-  disconnect(socket_, nullptr, this, nullptr);
-  socket_->disconnectFromHost();
+  disconnect(transport_, nullptr, this, nullptr);
+  transport_->disconnectFromHost();
   resetConnectionState();
   emit mergedInto(existing);
 }
 
 void ChatSession::readData() {
-  buffer_.append(socket_->readAll());
+  buffer_.append(transport_->readAll());
   while (!merged_) {
     const auto newline = buffer_.indexOf('\n');
     if (newline < 0) {
       if (buffer_.size() > 1024 * 1024) {
-        socket_->disconnectFromHost();
+        transport_->disconnectFromHost();
       }
       return;
     }
@@ -555,7 +544,7 @@ void ChatSession::processLine(const QString &line) {
   if (line.startsWith(QStringLiteral("NICKNAME "))) {
     const auto name = line.mid(9).trimmed();
     if (name.isEmpty()) {
-      socket_->disconnectFromHost();
+      transport_->disconnectFromHost();
       return;
     }
     const bool firstHandshake = !handshakeComplete_;
@@ -759,5 +748,5 @@ void ChatSession::processLine(const QString &line) {
 }
 
 void ChatSession::sendLine(const QString &line) {
-  socket_->write(line.toUtf8() + '\n');
+  transport_->write(line.toUtf8() + '\n');
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ollamaclient.h"
+#include "protocol/centralclient.h"
 
 #include <QDateTime>
 #include <QHash>
@@ -59,13 +60,18 @@ private:
 
   enum class Focus { Hosts, Chat, Conversations, Menu };
   enum class Menu { None, Chat, Settings };
-  enum class Dialog { None, Connect, Nickname, OllamaUrl, OllamaModel, ListenPort, CloseChat, Quit };
+  enum class Dialog { None, Connect, Nickname, OllamaUrl, OllamaModel, ListenPort, CentralHost, CloseChat, Quit };
 
   void configureNickname();
   void configureTerminal();
   void restoreTerminal();
   void startListening();
+  // Listens and discovers hosts on the LAN, or, with a central host
+  // configured, leaves both to the central host.
+  void applyNetworkMode();
   void startDiscovery();
+  void stopDiscovery();
+  void reportCentralState();
   void announcePresence();
   void readDiscoveryDatagrams();
   void scanPrivateSubnets();
@@ -83,6 +89,8 @@ private:
   void setListenPort(quint16 port);
   void connectToAddress(const QString &address, quint16 port, const QString &nickname = {});
   void acceptConnection();
+  void acceptRelayConnection(RelayTransport *transport);
+  void adoptIncomingSession(ChatSession *session, quint16 port);
   void addSession(ChatSession *session, const QString &title);
   void conversationIdentified(ChatSession *session);
   void mergeConversation(ChatSession *duplicate, ChatSession *existing);
@@ -113,6 +121,12 @@ private:
   QString conversationTitle(const Conversation &conversation) const;
 
   QTcpServer server_;
+  CentralClient central_;
+  // What the current connections were made for: empty on the LAN, else the
+  // central host and the identity registered with it.
+  QString networkModeKey_;
+  bool networkModeApplied_ = false;
+  bool discoverySetUp_ = false;
   QUdpSocket discoverySocket_;
   QTimer discoveryTimer_;
   QTimer subnetScanTimer_;

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- Central host mode. Enter the IP address or DNS name of a server running
+  the new `lantalk-centralized-service` (optionally with `:port`, default
+  45455) under Settings → General → Central host, or Settings → Central
+  Host in the TUI. LANTalk then stops listening for chats and scanning the
+  LAN. The host list shows the clients connected to the central host, and
+  every conversation, including typing notifications, files and the Live
+  Translate handshake, is relayed through it. Translation itself still
+  happens locally with your own Ollama server. Clearing the field returns
+  to direct LAN chat, and open conversations move to the new route right
+  away.
+
 ## v1.7.0 - 2026-10-23
 
 ### Added

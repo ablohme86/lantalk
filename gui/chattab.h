@@ -36,8 +36,13 @@ public:
   // Ollama servers found on the network also make Live Translate available
   // and can be picked in its dialog.
   void setOllamaDiscovery(OllamaDiscovery *discovery);
+  // The peer's nickname from the latest handshake, if there was one.
+  QString peerNickname() const;
   // Retries a disconnected conversation now instead of waiting for the timer.
   void reconnectNow();
+  // Drops the current connection, if any, and connects again, e.g. after the
+  // network mode (LAN or central host) changed.
+  void restartConnection();
   void closeConversation();
 
 signals:

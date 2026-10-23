@@ -9,6 +9,7 @@
 #include <QStringList>
 #include <QTimer>
 
+class ChatTransport;
 class ConnectionRegistry;
 class QFile;
 class QTcpSocket;
@@ -22,9 +23,16 @@ public:
   // `registry`, or with ConnectionRegistry::shared() when it is null.
   explicit ChatSession(QTcpSocket *socket, QObject *parent = nullptr,
                        ConnectionRegistry *registry = nullptr);
+  // The same for any transport, e.g. a channel relayed by a central host.
+  explicit ChatSession(ChatTransport *transport, QObject *parent = nullptr,
+                       ConnectionRegistry *registry = nullptr);
   ~ChatSession() override;
   void beginHandshake(const QString &nickname);
-  void connectToHost(const QString &address, quint16 port);
+  // `peerNameHint` is the nickname expected at that address, if known.
+  void connectToHost(const QString &address, quint16 port,
+                     const QString &peerNameHint = {});
+  // Replaces the current connection, if any, with a new one made by
+  // ChatTransport::create().
   void reconnectToHost(const QString &address, quint16 port);
   void closeConnection();
   // Records the peer's listening endpoint for an incoming session so that a
@@ -107,7 +115,7 @@ private:
   };
 
   ConnectionRegistry *registry_;
-  QTcpSocket *socket_;
+  ChatTransport *transport_;
   QByteArray buffer_;
   QString nickname_;
   QString peerName_;
@@ -115,6 +123,7 @@ private:
   QString peerAddress_;
   QString remoteHost_;
   quint16 remotePort_ = 0;
+  QString peerNameHint_;
   bool outgoing_ = false;
   bool closed_ = false;
   bool merged_ = false;

@@ -375,6 +375,16 @@ void ChatTab::setReconnectEndpoint(const QString &address, quint16 port) {
   reconnectPort_ = port;
 }
 
+QString ChatTab::peerNickname() const { return lastPeerName_; }
+
+void ChatTab::restartConnection() {
+  if (reconnectAddress_.isEmpty() || reconnectPort_ == 0) return;
+  reconnectTimer_->stop();
+  session_->reconnectToHost(reconnectAddress_, reconnectPort_);
+  status_->setText(QStringLiteral("Reconnecting to %1…")
+                       .arg(reconnectAddress_));
+}
+
 void ChatTab::reconnectNow() {
   if (connected_ || !reconnectTimer_->isActive()) return;
   reconnectTimer_->stop();

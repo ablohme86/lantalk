@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ollamadiscovery.h"
+#include "protocol/centralclient.h"
 
 #include <QDateTime>
 #include <QHash>
@@ -27,6 +28,7 @@ class MainWindow final : public QMainWindow {
 
 public:
   MainWindow();
+  ~MainWindow() override;
   void activateFromAnotherLaunch();
 
 protected:
@@ -45,7 +47,14 @@ private:
   void connectToAddress(const QString &address, quint16 port,
                         const QString &nickname = {});
   void startListening();
+  // Listens and discovers hosts on the LAN, or, with a central host
+  // configured, leaves both to the central host.
+  void applyNetworkMode();
   void startDiscovery();
+  void stopDiscovery();
+  void acceptRelayConnection(RelayTransport *transport);
+  void adoptIncomingSession(ChatSession *session, quint16 port);
+  void updateCentralStatus();
   void setupTrayIcon();
   void updateTrayIcon();
   void showFromTray();
@@ -69,6 +78,12 @@ private:
   quint16 discoveredPortForAddress(const QHostAddress &address) const;
 
   QTcpServer server_;
+  CentralClient central_;
+  // What the current connections were made for: empty on the LAN, else the
+  // central host and the identity registered with it.
+  QString networkModeKey_;
+  bool networkModeApplied_ = false;
+  bool discoverySetUp_ = false;
   struct DiscoveredHost {
     QString nickname;
     QHostAddress address;

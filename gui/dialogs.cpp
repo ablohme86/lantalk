@@ -2,6 +2,7 @@
 
 #include "appconfig.h"
 #include "ollamadiscovery.h"
+#include "protocol/centralprotocol.h"
 
 #include <QCheckBox>
 #include <QComboBox>
@@ -183,6 +184,17 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
           .toUInt());
   layout->addRow(QStringLiteral("Nickname"), nickname_);
   layout->addRow(QStringLiteral("Listen port"), listenPort_);
+  centralHost_ = new QLineEdit(this);
+  centralHost_->setPlaceholderText(
+      QStringLiteral("None (chat directly on the LAN)"));
+  centralHost_->setToolTip(QStringLiteral(
+      "IP address or DNS name of a lantalk-centralized-service, optionally "
+      "with :port (default %1). With a central host, LANTalk stops listening "
+      "and sends every conversation through it.")
+                               .arg(CentralProtocol::DefaultCentralPort));
+  centralHost_->setText(
+      settings.value(QStringLiteral("network/centralHost")).toString());
+  layout->addRow(QStringLiteral("Central host"), centralHost_);
   notifications_ = new QCheckBox(
       QStringLiteral("Notify me about new messages"), this);
   notifications_->setChecked(
@@ -203,6 +215,8 @@ void SettingsDialog::save() const {
   settings.setValue(QStringLiteral("profile/nickname"),
                     nickname.isEmpty() ? QStringLiteral("Guest") : nickname);
   settings.setValue(QStringLiteral("network/listenPort"), listenPort_->value());
+  settings.setValue(QStringLiteral("network/centralHost"),
+                    centralHost_->text().trimmed());
   settings.setValue(QStringLiteral("notifications/enabled"),
                     notifications_->isChecked());
   settings.setValue(QStringLiteral("ollama/url"),
