@@ -7,6 +7,7 @@
 #include <QSettings>
 #include <QTimer>
 
+#include "appconfig.h"
 #include "gui/appicon.h"
 #include "gui/mainwindow.h"
 #include "tui/terminalui.h"
@@ -34,7 +35,7 @@ bool isInteractiveTerminal()
 }
 
 QString instanceServerName() {
-  return QStringLiteral("lanchat-instance-%1")
+  return QStringLiteral("lantalk-instance-%1")
       .arg(QCoreApplication::applicationName().toLower());
 }
 
@@ -117,13 +118,14 @@ int main(int argc, char *argv[]) {
   }
   if (terminalMode) {
     QCoreApplication application(argc, argv);
-    application.setOrganizationName(QStringLiteral("LANChat"));
-    application.setApplicationName(QStringLiteral("LANChat"));
+    application.setOrganizationName(QStringLiteral("LANTalk"));
+    application.setApplicationName(QStringLiteral("LANTalk"));
+    migrateLegacySettings();
     QLocalServer instanceServer;
     const auto instanceResult = startInstanceServer(instanceServer);
     if (instanceResult == InstanceResult::Existing) return 0;
     if (instanceResult == InstanceResult::Error) {
-      std::fprintf(stderr, "LANChat could not create its single-instance listener.\n");
+      std::fprintf(stderr, "LANTalk could not create its single-instance listener.\n");
       return 1;
     }
     TerminalUi terminal;
@@ -132,8 +134,9 @@ int main(int argc, char *argv[]) {
     return application.exec();
   }
   QApplication application(argc, argv);
-  application.setOrganizationName(QStringLiteral("LANChat"));
-  application.setApplicationName(QStringLiteral("LANChat"));
+  application.setOrganizationName(QStringLiteral("LANTalk"));
+  application.setApplicationName(QStringLiteral("LANTalk"));
+  migrateLegacySettings();
   auto font = application.font();
   const int configuredFontSize =
       QSettings()
@@ -147,7 +150,7 @@ int main(int argc, char *argv[]) {
   const auto instanceResult = startInstanceServer(instanceServer);
   if (instanceResult == InstanceResult::Existing) return 0;
   if (instanceResult == InstanceResult::Error) {
-    std::fprintf(stderr, "LANChat could not create its single-instance listener.\n");
+    std::fprintf(stderr, "LANTalk could not create its single-instance listener.\n");
     return 1;
   }
   application.setWindowIcon(createAppIcon());

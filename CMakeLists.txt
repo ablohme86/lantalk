@@ -1,17 +1,17 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(LanChat VERSION 1.1.0 LANGUAGES CXX)
+project(LanTalk VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-option(LANCHAT_BUILD_TESTS "Build the LANChat unit tests" ON)
+option(LANTALK_BUILD_TESTS "Build the LANTalk unit tests" ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 
 # Everything except main.cpp, so the unit tests can link the same code.
-add_library(lanchat_lib STATIC
+add_library(lantalk_lib STATIC
     appconfig.h
     ollamaclient.cpp
     ollamaclient.h
@@ -38,17 +38,17 @@ add_library(lanchat_lib STATIC
     gui/mainwindow.h
 )
 
-target_include_directories(lanchat_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(lantalk_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(lanchat_lib PUBLIC Qt6::Widgets Qt6::Network)
+target_link_libraries(lantalk_lib PUBLIC Qt6::Widgets Qt6::Network)
 
-qt_add_executable(lanchat
+qt_add_executable(lantalk
     main.cpp
 )
 
-target_link_libraries(lanchat PRIVATE lanchat_lib)
+target_link_libraries(lantalk PRIVATE lantalk_lib)
 
-set_target_properties(lanchat PROPERTIES
+set_target_properties(lantalk PROPERTIES
     WIN32_EXECUTABLE TRUE
     MACOSX_BUNDLE TRUE
 )
@@ -57,33 +57,33 @@ if(UNIX AND NOT APPLE)
     # The Linux release tarball ships the Qt libraries it deploys next to the
     # executable.
     include(GNUInstallDirs)
-    set_target_properties(lanchat PROPERTIES
+    set_target_properties(lantalk PROPERTIES
         INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
     )
 endif()
 
 if(WIN32)
     enable_language(RC)
-    file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/lanchat.ico" LANCHAT_ICON_PATH)
-    configure_file(resources/lanchat.rc.in ${CMAKE_CURRENT_BINARY_DIR}/lanchat.rc @ONLY)
-    target_sources(lanchat PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/lanchat.rc)
+    file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/lantalk.ico" LANTALK_ICON_PATH)
+    configure_file(resources/lantalk.rc.in ${CMAKE_CURRENT_BINARY_DIR}/lantalk.rc @ONLY)
+    target_sources(lantalk PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/lantalk.rc)
 endif()
 
-install(TARGETS lanchat BUNDLE DESTINATION . RUNTIME DESTINATION bin)
+install(TARGETS lantalk BUNDLE DESTINATION . RUNTIME DESTINATION bin)
 
 qt_generate_deploy_app_script(
-    TARGET lanchat
+    TARGET lantalk
     OUTPUT_SCRIPT deploy_script
     NO_TRANSLATIONS
 )
 install(SCRIPT ${deploy_script})
 
-if(LANCHAT_BUILD_TESTS)
+if(LANTALK_BUILD_TESTS)
     find_package(Qt6 COMPONENTS Test)
     if(Qt6Test_FOUND)
         enable_testing()
         add_subdirectory(tests)
     else()
-        message(STATUS "Qt6 Test not found; skipping LANChat unit tests")
+        message(STATUS "Qt6 Test not found; skipping LANTalk unit tests")
     endif()
 endif()

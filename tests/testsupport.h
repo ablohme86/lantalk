@@ -19,18 +19,18 @@
 namespace TestSupport {
 
 // Points QSettings() at a fresh temporary INI location so tests never touch
-// the user's real LANChat settings.
+// the user's real LANTalk settings.
 inline void isolateSettings() {
   static QTemporaryDir directory;
-  QCoreApplication::setOrganizationName(QStringLiteral("LANChatTests"));
-  QCoreApplication::setApplicationName(QStringLiteral("LANChatTests"));
+  QCoreApplication::setOrganizationName(QStringLiteral("LANTalkTests"));
+  QCoreApplication::setApplicationName(QStringLiteral("LANTalkTests"));
   QSettings::setDefaultFormat(QSettings::IniFormat);
   QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                      directory.path());
   QSettings().clear();
 }
 
-// One LANChat instance: a listener plus the sessions it owns, with its own
+// One LANTalk instance: a listener plus the sessions it owns, with its own
 // connection registry so several instances can live in one test process.
 class Peer {
 public:

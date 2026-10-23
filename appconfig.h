@@ -33,6 +33,18 @@ inline QString escapeProtocolField(const QString &value)
     return value.simplified().replace(u'\n', u' ').replace(u'\r', u' ');
 }
 
+// Copies settings saved under the app's former name (LANChat) the first time
+// LANTalk runs, so nickname, history, open tabs, and preferences carry over.
+// The old settings are left untouched.
+inline void migrateLegacySettings()
+{
+    QSettings settings;
+    if (!settings.allKeys().isEmpty()) return;
+    const QSettings legacy(QSettings::defaultFormat(), QSettings::UserScope,
+                           QStringLiteral("LANChat"), QStringLiteral("LANChat"));
+    for (const auto &key : legacy.allKeys()) settings.setValue(key, legacy.value(key));
+}
+
 inline bool isOllamaConfigured()
 {
     QSettings settings;

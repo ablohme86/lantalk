@@ -33,13 +33,13 @@
 #include <algorithm>
 
 MainWindow::MainWindow() {
-  setWindowTitle(QStringLiteral("LANChat"));
+  setWindowTitle(QStringLiteral("LANTalk"));
   setWindowIcon(createAppIcon());
   resize(900, 600);
   auto *central = new QWidget(this);
   auto *layout = new QVBoxLayout(central);
   host_ = new QComboBox(central);
-  host_->setPlaceholderText(QStringLiteral("No LANChat hosts found"));
+  host_->setPlaceholderText(QStringLiteral("No LANTalk hosts found"));
   tabs_ = new QTabWidget(central);
   tabs_->setTabsClosable(true);
   layout->addWidget(host_);
@@ -47,7 +47,7 @@ MainWindow::MainWindow() {
   setCentralWidget(central);
 
   auto *fileMenu = menuBar()->addMenu(QStringLiteral("File"));
-  auto *exitAction = fileMenu->addAction(QStringLiteral("Exit LanChat"));
+  auto *exitAction = fileMenu->addAction(QStringLiteral("Exit LANTalk"));
   auto *connectToAction =
       menuBar()->addAction(QStringLiteral("Connect..."));
   auto *settingsMenu = menuBar()->addMenu(QStringLiteral("Settings"));
@@ -125,7 +125,7 @@ void MainWindow::showFontSizeDialog() {
 void MainWindow::setupTrayIcon() {
   trayIcon_ = new QSystemTrayIcon(this);
   auto *menu = new QMenu(this);
-  auto *openAction = menu->addAction(QStringLiteral("Open LANChat"));
+  auto *openAction = menu->addAction(QStringLiteral("Open LANTalk"));
   menu->addSeparator();
   auto *quitAction = menu->addAction(QStringLiteral("Quit"));
   trayIcon_->setContextMenu(menu);
@@ -152,11 +152,11 @@ void MainWindow::updateTrayIcon() {
   if (!trayIcon_) return;
   trayIcon_->setIcon(createAppIcon(unreadMessageCount_));
   if (unreadMessageCount_ == 0) {
-    trayIcon_->setToolTip(QStringLiteral("LANChat"));
+    trayIcon_->setToolTip(QStringLiteral("LANTalk"));
     return;
   }
   trayIcon_->setToolTip(
-      QStringLiteral("LANChat — %1 unread message%2")
+      QStringLiteral("LANTalk — %1 unread message%2")
           .arg(unreadMessageCount_)
           .arg(unreadMessageCount_ == 1 ? QString() : QStringLiteral("s")));
 }
@@ -272,7 +272,7 @@ void MainWindow::promptForNickname() {
 
   bool accepted = false;
   const auto nickname = escapeProtocolField(QInputDialog::getText(
-      this, QStringLiteral("Welcome to LANChat"),
+      this, QStringLiteral("Welcome to LANTalk"),
       QStringLiteral("Choose a username:"), QLineEdit::Normal, {}, &accepted));
   if (accepted && !nickname.isEmpty()) {
     settings.setValue(QStringLiteral("profile/nickname"), nickname);
@@ -342,7 +342,7 @@ void MainWindow::startDiscovery() {
   connect(&discoverySettleTimer_, &QTimer::timeout, this, [this] {
     initialDiscoveryScanComplete_ = true;
     if (discoveredHosts_.isEmpty()) {
-      host_->setPlaceholderText(QStringLiteral("No LANChat hosts found"));
+      host_->setPlaceholderText(QStringLiteral("No LANTalk hosts found"));
     }
   });
   subnetScanTimer_.setInterval(5000);
@@ -452,7 +452,7 @@ void MainWindow::scanPrivateSubnets() {
   if (targets.isEmpty()) {
     if (!initialDiscoveryScanComplete_) {
       initialDiscoveryScanComplete_ = true;
-      host_->setPlaceholderText(QStringLiteral("No LANChat hosts found"));
+      host_->setPlaceholderText(QStringLiteral("No LANTalk hosts found"));
     }
     return;
   }
@@ -496,7 +496,7 @@ void MainWindow::refreshHostList() {
   if (hosts.isEmpty()) {
     host_->setPlaceholderText(
         initialDiscoveryScanComplete_
-            ? QStringLiteral("No LANChat hosts found")
+            ? QStringLiteral("No LANTalk hosts found")
             : QStringLiteral("Scanning for hosts..."));
     return;
   }

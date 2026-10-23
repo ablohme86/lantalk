@@ -723,13 +723,13 @@ void ChatSession::processLine(const QString &line) {
     const auto cacheDirectory =
         QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
     if (cacheDirectory.isEmpty()) {
-      emit statusChanged(QStringLiteral("Cannot locate the LANChat cache folder."));
+      emit statusChanged(QStringLiteral("Cannot locate the LANTalk cache folder."));
       return;
     }
     const auto directory = QDir(cacheDirectory).filePath(QStringLiteral("received"));
     if (!QDir().mkpath(directory)) {
       emit statusChanged(
-          QStringLiteral("Cannot create the LANChat cache folder."));
+          QStringLiteral("Cannot create the LANTalk cache folder."));
       return;
     }
     const auto safeName = QFileInfo(completed.name).fileName();

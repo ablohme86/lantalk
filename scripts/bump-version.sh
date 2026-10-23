@@ -10,9 +10,9 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cmake_file="$root/CMakeLists.txt"
 changelog="$root/CHANGELOG.md"
 
-current="$(sed -nE 's/^project\(LanChat VERSION ([0-9]+(\.[0-9]+){1,2}).*/\1/p' "$cmake_file")"
+current="$(sed -nE 's/^project\(LanTalk VERSION ([0-9]+(\.[0-9]+){1,2}).*/\1/p' "$cmake_file")"
 if [[ -z "$current" ]]; then
-  echo "Cannot find 'project(LanChat VERSION x.y[.z])' in CMakeLists.txt" >&2
+  echo "Cannot find 'project(LanTalk VERSION x.y[.z])' in CMakeLists.txt" >&2
   exit 1
 fi
 IFS=. read -r major minor patch <<<"$current"
@@ -26,7 +26,7 @@ case "$part" in
 esac
 next="$major.$minor.$patch"
 
-sed -i -E "s/^project\(LanChat VERSION [0-9.]+/project(LanChat VERSION $next/" "$cmake_file"
+sed -i -E "s/^project\(LanTalk VERSION [0-9.]+/project(LanTalk VERSION $next/" "$cmake_file"
 
 # Keep an empty Unreleased section on top and move its entries under the
 # new version heading.

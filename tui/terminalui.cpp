@@ -124,7 +124,7 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
     connect(inputNotifier, &QSocketNotifier::activated, this, &TerminalUi::handleInput);
 #endif
     if (!ansi_) {
-        print(QStringLiteral("LANChat terminal mode\n"
+        print(QStringLiteral("LANTalk terminal mode\n"
                              "Commands: /help, /hosts, /connect <host|number> [port], /tabs, "
                              "/use <tab>, /close [tab], /nick <name>, /translate <my language> | "
                              "<peer language>, /stoptranslate, /quit"));
@@ -149,7 +149,7 @@ TerminalUi::~TerminalUi()
 
 void TerminalUi::activateFromAnotherLaunch()
 {
-    setStatus(QStringLiteral("LANChat is already running in another terminal."));
+    setStatus(QStringLiteral("LANTalk is already running in another terminal."));
 }
 
 void TerminalUi::configureNickname()
@@ -691,8 +691,8 @@ void TerminalUi::activateMenuItem()
                            QStringLiteral("Close the active chat? (y/n)"), QString());
             }
         } else {
-            openDialog(Dialog::Quit, QStringLiteral("Quit LANChat"),
-                       QStringLiteral("Quit LANChat? (y/n)"), QString());
+            openDialog(Dialog::Quit, QStringLiteral("Quit LANTalk"),
+                       QStringLiteral("Quit LANTalk? (y/n)"), QString());
         }
     } else if (openMenu_ == Menu::Settings) {
         if (selectedAction_ == 0) {
@@ -1343,8 +1343,8 @@ void TerminalUi::redraw()
                    + styledLabel(menuTitles().at(menu)) + u' ' + MenuBarStyle + u' ';
         menuBarWidth += labelWidth(menuTitles().at(menu)) + 3;
     }
-    QString menuHint = QStringLiteral("Alt-C / Alt-S   LANChat ");
-    if (menuBarWidth + displayWidth(menuHint) > terminalColumns_) menuHint = QStringLiteral("LANChat ");
+    QString menuHint = QStringLiteral("Alt-C / Alt-S   LANTalk ");
+    if (menuBarWidth + displayWidth(menuHint) > terminalColumns_) menuHint = QStringLiteral("LANTalk ");
     if (menuBarWidth + displayWidth(menuHint) > terminalColumns_) menuHint.clear();
     menuBar += QString(std::max(0, terminalColumns_ - menuBarWidth - displayWidth(menuHint)), u' ') + menuHint;
     terminalOutput << menuBar << "\x1b[0m\x1b[K\n";
@@ -1531,14 +1531,14 @@ void TerminalUi::printHosts() const
 {
     const auto hosts = sortedHosts();
     if (ansi_) {
-        const_cast<TerminalUi *>(this)->status_ = hosts.isEmpty() ? QStringLiteral("No LANChat hosts found.")
+        const_cast<TerminalUi *>(this)->status_ = hosts.isEmpty() ? QStringLiteral("No LANTalk hosts found.")
                                                                     : QStringLiteral("%1 host(s) found.").arg(hosts.size());
         const_cast<TerminalUi *>(this)->redraw();
         return;
     }
     QStringList lines{QStringLiteral("Discovered hosts:")};
     for (int i = 0; i < hosts.size(); ++i) lines << QStringLiteral("  %1. %2 (%3:%4)").arg(i + 1).arg(hosts[i].nickname, hosts[i].address.toString()).arg(hosts[i].port);
-    print(hosts.isEmpty() ? QStringLiteral("No LANChat hosts found.") : lines.join(u'\n'));
+    print(hosts.isEmpty() ? QStringLiteral("No LANTalk hosts found.") : lines.join(u'\n'));
 }
 
 void TerminalUi::printConversations() const

@@ -43,7 +43,7 @@ namespace {
 QUrl attachmentActionUrl(const QString &action, const QString &path,
                          const QString &name = {}) {
   QUrl url;
-  url.setScheme(QStringLiteral("lanchat"));
+  url.setScheme(QStringLiteral("lantalk"));
   url.setHost(action);
   QUrlQuery query;
   query.addQueryItem(QStringLiteral("path"), path);
@@ -208,7 +208,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
             emit titleChanged();
           });
   connect(log_, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
-    if (url.scheme() != QStringLiteral("lanchat")) {
+    if (url.scheme() != QStringLiteral("lantalk")) {
       return;
     }
     const QString path =

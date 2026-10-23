@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- The app is renamed from LANChat to LANTalk, matching the repository. The
+  executable is now `lantalk` and release files are named `LanTalk-...`. On
+  first launch LANTalk copies the settings, history, and open tabs saved by
+  LANChat. The wire protocol is unchanged, so LANTalk and LANChat discover
+  and chat with each other, and the Windows installer replaces an installed
+  LANChat.
+
 ## v1.1.0 - 2026-10-23
 
 ### Added

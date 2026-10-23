@@ -80,7 +80,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "Release v$version"
-          git tag -a "v$version" -m "LANChat v$version"
+          git tag -a "v$version" -m "LANTalk v$version"
           git push origin "HEAD:$GITHUB_REF_NAME" "v$version"
           echo "RELEASE_TAG=v$version" >> "$GITHUB_ENV"
 
@@ -100,7 +100,7 @@ jobs:
     # The oldest supported runner keeps the glibc requirement of the tarball low.
     runs-on: ubuntu-22.04
     env:
-      PACKAGE: LanChat-${{ needs.version.outputs.tag }}-linux-x86_64
+      PACKAGE: LanTalk-${{ needs.version.outputs.tag }}-linux-x86_64
 
     steps:
       - name: Check out release tag
@@ -120,16 +120,16 @@ jobs:
           version: ${{ env.QT_VERSION }}
           cache: true
 
-      - name: Build LANChat
+      - name: Build LANTalk
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DLANCHAT_BUILD_TESTS=OFF
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DLANTALK_BUILD_TESTS=OFF
           cmake --build build --parallel
 
       - name: Create tarball
         run: |
           # Qt's deploy step requires an absolute install prefix.
           cmake --install build --prefix "$PWD/dist/$PACKAGE"
-          test -x "dist/$PACKAGE/bin/lanchat"
+          test -x "dist/$PACKAGE/bin/lantalk"
           cp README.md LICENSE CHANGELOG.md "dist/$PACKAGE/"
           tar -C dist -czf "dist/$PACKAGE.tar.gz" "$PACKAGE"
 
@@ -161,24 +161,24 @@ jobs:
 
       - name: Configure Windows x64 build
         shell: pwsh
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" -DLANCHAT_BUILD_TESTS=OFF
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" -DLANTALK_BUILD_TESTS=OFF
 
-      - name: Build LANChat
+      - name: Build LANTalk
         run: cmake --build build --config Release --parallel
 
       - name: Stage portable Windows app
         shell: pwsh
         run: |
-          $stageDir = Join-Path $env:RUNNER_TEMP 'lanchat-install'
+          $stageDir = Join-Path $env:RUNNER_TEMP 'lantalk-install'
           $appDir = Join-Path $env:GITHUB_WORKSPACE 'dist\windows'
-          $zipPath = Join-Path $env:GITHUB_WORKSPACE "dist\LanChat-$env:RELEASE_TAG-windows-x64.zip"
+          $zipPath = Join-Path $env:GITHUB_WORKSPACE "dist\LanTalk-$env:RELEASE_TAG-windows-x64.zip"
 
           cmake --install build --config Release --prefix $stageDir
           New-Item -ItemType Directory -Force -Path $appDir | Out-Null
           Copy-Item -Path (Join-Path $stageDir 'bin\*') -Destination $appDir -Recurse -Force
 
-          if (-not (Test-Path (Join-Path $appDir 'lanchat.exe'))) {
-            throw 'The staged Windows app is missing lanchat.exe.'
+          if (-not (Test-Path (Join-Path $appDir 'lantalk.exe'))) {
+            throw 'The staged Windows app is missing lantalk.exe.'
           }
 
           Compress-Archive -Path (Join-Path $appDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
@@ -194,16 +194,16 @@ jobs:
         env:
           PRODUCT_VERSION: ${{ needs.version.outputs.version }}
         run: |
-          $msiPath = "dist\LanChat-$env:RELEASE_TAG-windows-x64.msi"
-          wix build -acceptEula wix7 -arch x64 -d "ProductVersion=$env:PRODUCT_VERSION" -o $msiPath installer\LanChat.wxs
+          $msiPath = "dist\LanTalk-$env:RELEASE_TAG-windows-x64.msi"
+          wix build -acceptEula wix7 -arch x64 -d "ProductVersion=$env:PRODUCT_VERSION" -o $msiPath installer\LanTalk.wxs
 
       - name: Upload Windows packages
         uses: actions/upload-artifact@v7
         with:
           name: windows-packages
           path: |
-            dist/LanChat-${{ needs.version.outputs.tag }}-windows-x64.msi
-            dist/LanChat-${{ needs.version.outputs.tag }}-windows-x64.zip
+            dist/LanTalk-${{ needs.version.outputs.tag }}-windows-x64.msi
+            dist/LanTalk-${{ needs.version.outputs.tag }}-windows-x64.zip
           if-no-files-found: error
 
   publish:
@@ -231,12 +231,12 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.version.outputs.tag }}
-          name: LANChat ${{ needs.version.outputs.tag }}
+          name: LANTalk ${{ needs.version.outputs.tag }}
           body_path: release-notes.md
           generate_release_notes: true
           prerelease: ${{ contains(needs.version.outputs.tag, '-') }}
           files: |
-            dist/LanChat-${{ needs.version.outputs.tag }}-linux-x86_64.tar.gz
-            dist/LanChat-${{ needs.version.outputs.tag }}-windows-x64.msi
-            dist/LanChat-${{ needs.version.outputs.tag }}-windows-x64.zip
+            dist/LanTalk-${{ needs.version.outputs.tag }}-linux-x86_64.tar.gz
+            dist/LanTalk-${{ needs.version.outputs.tag }}-windows-x64.msi
+            dist/LanTalk-${{ needs.version.outputs.tag }}-windows-x64.zip
           fail_on_unmatched_files: true

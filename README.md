@@ -1,10 +1,12 @@
-# LANChat
+# LANTalk
 
-LANChat is a Qt 6 desktop client for direct LAN chat using the TCP-based
-`LANCHAT PROTOCOL`. Each connected host has its own chat tab. The optional
+LANTalk (formerly LANChat) is a Qt 6 desktop client for direct LAN chat using
+the TCP-based `LANCHAT PROTOCOL`, so it interoperates with LANChat installs.
+On first launch it copies the settings, chat history, and open tabs saved by
+LANChat. Each connected host has its own chat tab. The optional
 Live Translate feature uses a local Ollama `translategemma` model.
 The desktop app includes a custom chat icon and a system tray icon that shows
-unread messages received while LANChat is in the background. The GUI remembers
+unread messages received while LANTalk is in the background. The GUI remembers
 open chat tabs across restarts and retries disconnected peers every 10 seconds
 while their tab remains open.
 Connection tabs show each peer's IP address while connected and use
@@ -17,7 +19,7 @@ Messages show local `[HH:mm]` timestamps. Tabs highlight when another
 conversation receives a message and clear the highlight when selected.
 The GUI starts with an 11 pt font; change it under Settings → Font Size.
 
-LANChat keeps at most one connection per peer (IP address + nickname).
+LANTalk keeps at most one connection per peer (IP address + nickname).
 Connecting to a host you already have a conversation with, from either the GUI
 or the TUI, switches to its existing tab instead of opening a new connection;
 a disconnected tab is retried immediately. The rule is enforced for every
@@ -28,7 +30,7 @@ and its history and state are kept.
 Live Translate languages are remembered per conversation. After a reconnect
 or an application restart, Live Translate turns itself back on as soon as the
 configured Ollama server is reachable and has the configured model; while the
-server is unavailable, LANChat retries every 30 seconds. Turning Live
+server is unavailable, LANTalk retries every 30 seconds. Turning Live
 Translate off is remembered as well.
 
 When the other participant is composing a message, `Name is typing...` appears
@@ -37,11 +39,11 @@ the TUI). A draft left untouched for 60 seconds stops counting as typing.
 
 The app automatically selects the ANSI terminal interface when launched from
 an interactive terminal. It uses the desktop GUI otherwise. Pass `--tui` to
-force terminal mode. The TUI listens for chats, discovers LANChat peers, and
+force terminal mode. The TUI listens for chats, discovers LANTalk peers, and
 supports multiple conversations:
 
 ```sh
-lanchat --tui
+lantalk --tui
 ```
 
 On its first run, terminal mode asks for a nickname and stores it in the same
@@ -70,20 +72,20 @@ interactive TTY. Enable translation for the active conversation with
 `/translate <my language> | <peer language>`; pending Ollama translations appear
 in the bottom status line.
 
-Available LANChat hosts are discovered automatically and shown as
-`Nickname (IP address)` in the read-only Host selector. LANChat uses UDP
+Available LANTalk hosts are discovered automatically and shown as
+`Nickname (IP address)` in the read-only Host selector. LANTalk uses UDP
 announcements and unicast probes to addresses in private IPv4 interface
 subnets; peers answer with their configured TCP chat port (45454 by default).
 Subnets wider than `/16` are skipped to avoid sweeping very large private
-address ranges. LANChat filters its own discovery ID and local interface
+address ranges. LANTalk filters its own discovery ID and local interface
 addresses from the host list. Selecting a discovered host connects immediately.
 
 Drop images or files into a conversation to send them to the connected host.
 Image thumbnails appear in the chat log and open in an in-chat viewer when
-clicked. Received attachments are kept in LANChat's operating-system cache
+clicked. Received attachments are kept in LANTalk's operating-system cache
 until that conversation is closed. Use the `Save as...` link beside any
 attachment to copy it to a chosen location. File transfers show progress in the
-chat input, and launching LANChat again activates the running instance.
+chat input, and launching LANTalk again activates the running instance.
 
 ## Protocol extensions
 
@@ -128,9 +130,9 @@ cmake --install build --config Release --prefix dist
 ```
 
 Run the unit tests with `ctest --test-dir build` (requires Qt's Test module;
-configure with `-DLANCHAT_BUILD_TESTS=OFF` to skip them).
+configure with `-DLANTALK_BUILD_TESTS=OFF` to skip them).
 
-On Linux, run `dist/bin/lanchat`. On Windows, run `dist/bin/lanchat.exe`.
+On Linux, run `dist/bin/lantalk`. On Windows, run `dist/bin/lantalk.exe`.
 The install step invokes Qt's deployment support, which places the Qt runtime
 files needed by the executable in the install directory.
 
@@ -158,12 +160,12 @@ default). The workflow runs the unit tests, updates the version in
 `CMakeLists.txt`, moves the `Unreleased` changelog entries under the new
 version, commits and tags `vX.Y.Z`, and publishes:
 
-- `LanChat-vX.Y.Z-linux-x86_64.tar.gz`: extract it anywhere and run
-  `bin/lanchat`. Qt is bundled; the desktop GUI needs the X11 libraries
+- `LanTalk-vX.Y.Z-linux-x86_64.tar.gz`: extract it anywhere and run
+  `bin/lantalk`. Qt is bundled; the desktop GUI needs the X11 libraries
   `libxcb-cursor0` and `libxkbcommon-x11-0` (on Wayland it runs through
   XWayland).
-- `LanChat-vX.Y.Z-windows-x64.msi` and a portable
-  `LanChat-vX.Y.Z-windows-x64.zip`.
+- `LanTalk-vX.Y.Z-windows-x64.msi` and a portable
+  `LanTalk-vX.Y.Z-windows-x64.zip`.
 
 Pushing a `vX.Y.Z` tag yourself publishes that version without bumping it. The
 release notes come from the matching `CHANGELOG.md` section plus GitHub's
