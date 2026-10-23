@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.1.0 - 2026-10-23
+
 ### Added
 
 - Live Translate languages are saved per conversation and restored after
