@@ -43,14 +43,17 @@ MainWindow::MainWindow() {
   layout->addWidget(tabs_);
   setCentralWidget(central);
 
-  auto *chatMenu = menuBar()->addMenu(QStringLiteral("Chat"));
-  auto *connectToAction = chatMenu->addAction(QStringLiteral("Connect To…"));
+  auto *fileMenu = menuBar()->addMenu(QStringLiteral("File"));
+  auto *exitAction = fileMenu->addAction(QStringLiteral("Exit LANChat"));
+  auto *connectToAction =
+      menuBar()->addAction(QStringLiteral("Connect..."));
   auto *settingsMenu = menuBar()->addMenu(QStringLiteral("Settings"));
   auto *fontSizeAction = settingsMenu->addAction(QStringLiteral("Font Size"));
   settingsMenu->addSeparator();
   auto *settingsAction =
       settingsMenu->addAction(QStringLiteral("General..."));
   applyDarkMenuStyle();
+  connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
   connect(connectToAction, &QAction::triggered, this,
           &MainWindow::showConnectDialog);
   connect(settingsAction, &QAction::triggered, this, &MainWindow::showSettings);
