@@ -811,7 +811,7 @@ void TerminalUi::sendChatMessage(const QString &text)
     auto &conversation = conversations_[currentConversation_];
     if (!conversation.liveTranslate) {
         conversation.session->sendMessage(text);
-        appendTranscript(currentConversation_, QStringLiteral("me: %1").arg(text));
+        appendTranscript(currentConversation_, QStringLiteral("You: %1").arg(text));
         return;
     }
 
@@ -827,7 +827,7 @@ void TerminalUi::sendChatMessage(const QString &text)
                     if (index >= 0) {
                         session->sendMessage(translation, originalMessage);
                         appendTranscript(index,
-                                         QStringLiteral("me: %1").arg(originalMessage));
+                                         QStringLiteral("You: %1").arg(originalMessage));
                     }
                 }
                 --pendingOutgoingTranslations_;

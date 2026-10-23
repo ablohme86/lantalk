@@ -18,6 +18,7 @@
 
 ### Changed
 
+- The TUI labels outgoing messages as `You` to match the GUI.
 - Chat messages are sent with Enter; the Send button has been removed from the
   chat input row.
 - The GUI saves open chat tabs and restores them on launch. Disconnected peers
