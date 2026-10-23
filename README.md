@@ -41,17 +41,18 @@ or later) for typing notifications.
 
 The GUI message input is a multi-line editor: `Enter` sends, `Shift+Enter`
 starts a new line, and pasted text such as code keeps its line breaks and
-indentation. It grows to six lines and scrolls beyond that. The TUI shows
+indentation. It grows to twelve lines and scrolls beyond that. The TUI shows
 multi-line messages with indented continuation lines.
 
 Pasting several lines, or more than 200 characters, adds the text as a quote
-instead: a card above the GUI input (or `[quote 1: N lines]` before the TUI
-input) that is sent after your typed text, shown as a block, and never
-translated by Live Translate unless you tick its "Translate this" box (TUI:
-`/quote-translate [n|all]`; `/unquote [n|all]` removes it). Each card has a
-remove button; in the TUI, Backspace on an empty input removes the last quote.
-`Ctrl+Shift+V` in the GUI pastes as plain text. The GUI window title
-and the TUI menu bar show the LANTalk version.
+instead: a card above the GUI input that shows the text in an editable field,
+so it can be checked and changed before sending (in the TUI, `[quote 1: N
+lines]` before the input). Quotes are sent after your typed text, shown as a
+block, and never translated by Live Translate unless you tick its "Translate
+this" box (TUI: `/quote-translate [n|all]`; `/unquote [n|all]` removes it).
+Each card has a remove button; in the TUI, Backspace on an empty input removes
+the last quote. `Ctrl+Shift+V` in the GUI pastes as plain text. The GUI window
+title and the TUI menu bar show the LANTalk version.
 
 The app automatically selects the ANSI terminal interface when launched from
 an interactive terminal. It uses the desktop GUI otherwise. Pass `--tui` to

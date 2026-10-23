@@ -14,6 +14,9 @@
   pastes plain text in the GUI.
 - The TUI uses bracketed paste, so a multi-line paste no longer sends each
   line as a separate message.
+- GUI quote cards show the pasted text in an editable field that grows to
+  twelve lines, so a quote can be reviewed and changed before it is sent.
+  The message input also grows to twelve lines instead of six.
 
 ## v1.2.0 - 2026-10-23
 

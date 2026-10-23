@@ -6,6 +6,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QPlainTextEdit>
 #include <QClipboard>
 #include <QTextBrowser>
 #include <QLabel>
@@ -158,11 +159,20 @@ private slots:
     QVERIFY(!translate->isChecked());
     QVERIFY(!translate->isEnabled()); // Live Translate is off
 
+    // The quote is shown in full and can be edited before sending.
+    auto *editor = tab.findChild<QPlainTextEdit *>(QStringLiteral("quoteEditor"));
+    QVERIFY(editor);
+    QCOMPARE(editor->toPlainText(), QStringLiteral("int x = 1;\n    return x;"));
+    QVERIFY(editor->height() >= editor->fontMetrics().lineSpacing() * 3);
+    editor->moveCursor(QTextCursor::End);
+    QTest::keyClick(editor, Qt::Key_Return);
+    QTest::keyClicks(editor, QStringLiteral("// edited"));
+
     QTest::keyClicks(input, QStringLiteral("Look:"));
     QTest::keyClick(input, Qt::Key_Return);
     QTRY_COMPARE(received.size(), 1);
     QCOMPARE(received.first().first().toString(),
-             QStringLiteral("Look:\n[quote]\nint x = 1;\n    return x;\n[/quote]"));
+             QStringLiteral("Look:\n[quote]\nint x = 1;\n    return x;\n// edited\n[/quote]"));
     QTRY_VERIFY(tab.findChild<QCheckBox *>() == nullptr);
 
     const auto log = tab.findChild<QTextBrowser *>()->toPlainText();

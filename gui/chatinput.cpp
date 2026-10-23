@@ -10,7 +10,7 @@
 
 namespace {
 
-constexpr int MaximumVisibleLines = 6;
+constexpr int MaximumVisibleLines = 12;
 
 } // namespace
 
@@ -22,12 +22,11 @@ ChatInput::ChatInput(QWidget *parent) : QPlainTextEdit(parent) {
   connect(this, &QPlainTextEdit::textChanged, this, [this] {
     if (!settingText_) emit textEdited(text());
   });
-  // QPlainTextEdit's layout reports the document height in visual lines, and
-  // updates it when wrapping changes too.
+  // Also emitted when wrapping changes with the width.
   connect(document()->documentLayout(),
           &QAbstractTextDocumentLayout::documentSizeChanged, this,
-          &ChatInput::updateHeight);
-  updateHeight();
+          [this] { fitHeightToContent(this, 1, MaximumVisibleLines); });
+  fitHeightToContent(this, 1, MaximumVisibleLines);
 }
 
 QString ChatInput::text() const { return toPlainText(); }
@@ -46,7 +45,8 @@ QSize ChatInput::sizeHint() const {
 }
 
 QSize ChatInput::minimumSizeHint() const {
-  return {QPlainTextEdit::minimumSizeHint().width(), heightForLines(1)};
+  return {QPlainTextEdit::minimumSizeHint().width(),
+          plainTextHeightForLines(this, 1)};
 }
 
 void ChatInput::keyPressEvent(QKeyEvent *event) {
@@ -87,20 +87,21 @@ void ChatInput::insertFromMimeData(const QMimeData *source) {
   insertPlainText(text);
 }
 
-int ChatInput::heightForLines(int lines) const {
-  const auto margins = contentsMargins();
-  return lines * fontMetrics().lineSpacing() +
-         2 * int(document()->documentMargin()) + margins.top() +
-         margins.bottom() + 2 * frameWidth();
+int plainTextHeightForLines(const QPlainTextEdit *editor, int lines) {
+  const auto margins = editor->contentsMargins();
+  return lines * editor->fontMetrics().lineSpacing() +
+         2 * int(editor->document()->documentMargin()) + margins.top() +
+         margins.bottom() + 2 * editor->frameWidth();
 }
 
-void ChatInput::updateHeight() {
+void fitHeightToContent(QPlainTextEdit *editor, int minLines, int maxLines) {
+  // QPlainTextEdit's layout reports the document height in visual lines.
   const int lines =
-      int(document()->documentLayout()->documentSize().height());
-  const int height =
-      heightForLines(std::clamp(lines, 1, MaximumVisibleLines));
-  if (height != this->height()) {
-    setFixedHeight(height);
-    updateGeometry();
+      int(editor->document()->documentLayout()->documentSize().height());
+  const int height = plainTextHeightForLines(
+      editor, std::clamp(lines, minLines, maxLines));
+  if (height != editor->height()) {
+    editor->setFixedHeight(height);
+    editor->updateGeometry();
   }
 }

@@ -11,6 +11,7 @@ class ChatSession;
 class QLabel;
 class ChatInput;
 class QCheckBox;
+class QPlainTextEdit;
 class QVBoxLayout;
 class QPushButton;
 class QStackedWidget;
@@ -111,7 +112,7 @@ private:
   struct PendingQuote {
     QWidget *card;
     QCheckBox *translate;
-    QString text;
+    QPlainTextEdit *editor;
   };
 
   QWidget *quoteCards_;

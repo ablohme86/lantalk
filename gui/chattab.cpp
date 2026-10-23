@@ -8,10 +8,10 @@
 #include "protocol/quotedmessage.h"
 #include "translationrestorer.h"
 
+#include <QAbstractTextDocumentLayout>
 #include <QCheckBox>
 #include <QColor>
 #include <QFontDatabase>
-#include <QFontMetrics>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
@@ -24,6 +24,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPixmap>
+#include <QPlainTextEdit>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QResizeEvent>
@@ -440,39 +441,64 @@ void ChatTab::updateLocalTyping() {
                             !pendingQuotes_.isEmpty());
 }
 
-void ChatTab::addQuote(const QString &pastedText) {
-  auto text = pastedText;
+namespace {
+
+// Surrounding blank lines and trailing spaces go; indentation stays.
+QString trimmedQuote(QString text) {
   text.remove(QRegularExpression(QStringLiteral("^(\\s*\\n)+")));
   text.remove(QRegularExpression(QStringLiteral("\\s+$")));
+  return text;
+}
+
+QString quoteSummary(const QString &text) {
+  const int lines = int(text.count(u'\n')) + 1;
+  return QStringLiteral("Quote · %1 line%2")
+      .arg(lines)
+      .arg(lines == 1 ? QString() : QStringLiteral("s"));
+}
+
+} // namespace
+
+void ChatTab::addQuote(const QString &pastedText) {
+  const auto text = trimmedQuote(pastedText);
   if (text.isEmpty()) return;
 
+  // The quote stays editable until it is sent.
   auto *card = new QFrame(quoteCards_);
   card->setFrameShape(QFrame::StyledPanel);
-  auto *row = new QHBoxLayout(card);
-  row->setContentsMargins(6, 2, 2, 2);
-  const auto lines = text.split(u'\n');
-  auto *summary = new QLabel(card);
-  summary->setTextFormat(Qt::PlainText);
-  summary->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-  const auto summaryText =
-      QStringLiteral("Quote · %1 line%2 · %3")
-          .arg(lines.size())
-          .arg(lines.size() == 1 ? QString() : QStringLiteral("s"))
-          .arg(lines.first().trimmed());
-  summary->setText(summary->fontMetrics().elidedText(summaryText,
-                                                     Qt::ElideRight, 600));
-  summary->setToolTip(lines.mid(0, 40).join(u'\n'));
+  auto *cardLayout = new QVBoxLayout(card);
+  cardLayout->setContentsMargins(6, 2, 2, 4);
+  cardLayout->setSpacing(2);
+  auto *header = new QHBoxLayout;
+  auto *summary = new QLabel(quoteSummary(text), card);
   auto *translate = new QCheckBox(QStringLiteral("Translate this"), card);
   auto *remove = new QToolButton(card);
   remove->setText(QStringLiteral("✕"));
   remove->setAutoRaise(true);
   remove->setToolTip(QStringLiteral("Remove this quote"));
-  row->addWidget(summary, 1);
-  row->addWidget(translate);
-  row->addWidget(remove);
+  header->addWidget(summary, 1);
+  header->addWidget(translate);
+  header->addWidget(remove);
+  auto *editor = new QPlainTextEdit(card);
+  editor->setObjectName(QStringLiteral("quoteEditor"));
+  editor->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+  editor->setTabChangesFocus(true);
+  editor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  editor->setPlainText(text);
+  cardLayout->addLayout(header);
+  cardLayout->addWidget(editor);
   quoteCardsLayout_->addWidget(card);
   quoteCards_->show();
-  pendingQuotes_.append({card, translate, text});
+  pendingQuotes_.append({card, translate, editor});
+
+  const auto fit = [editor] { fitHeightToContent(editor, 3, 12); };
+  connect(editor->document()->documentLayout(),
+          &QAbstractTextDocumentLayout::documentSizeChanged, editor, fit);
+  fit();
+  connect(editor, &QPlainTextEdit::textChanged, this, [this, editor, summary] {
+    summary->setText(quoteSummary(editor->toPlainText()));
+    updateLocalTyping();
+  });
   connect(remove, &QToolButton::clicked, this,
           [this, card] { removeQuote(card); });
   updateQuoteTranslation();
@@ -605,10 +631,14 @@ void ChatTab::send() {
   QList<QuotedMessage::Segment> segments;
   if (!text.trimmed().isEmpty()) segments.append({text});
   for (const auto &quote : std::as_const(pendingQuotes_)) {
-    segments.append({quote.text, true,
+    // A quote emptied while editing is left out.
+    const auto quoted = trimmedQuote(quote.editor->toPlainText());
+    if (quoted.isEmpty()) continue;
+    segments.append({quoted, true,
                      quote.translate->isEnabled() &&
                          quote.translate->isChecked()});
   }
+  if (segments.isEmpty()) return;
   const auto draft = QuotedMessage::compose(segments, true);
   input_->clear();
   clearQuotes();
