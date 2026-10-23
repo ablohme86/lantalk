@@ -2,7 +2,6 @@
 
 #include <QDateTime>
 #include <QList>
-#include <QTextCursor>
 #include <QWidget>
 
 #include "messagetranslator.h"
@@ -15,7 +14,7 @@ class QPlainTextEdit;
 class QVBoxLayout;
 class QPushButton;
 class QStackedWidget;
-class QTextBrowser;
+class ChatLog;
 class ChatImagePreviewWidget;
 class QDragEnterEvent;
 class QDropEvent;
@@ -57,7 +56,7 @@ private slots:
 private:
   struct IncomingMessage {
     QString originalMessage;
-    QTextCursor messageCursor;
+    int messageId;
     bool translated = false;
     bool pending = false;
     // A notification waits for this message's translation.
@@ -66,7 +65,7 @@ private:
 
   void dragEnterEvent(QDragEnterEvent *event) override;
   void dropEvent(QDropEvent *event) override;
-  QTextCursor appendMessage(
+  int appendMessage(
       const QString &sender, const QString &message,
       const QString &hoverText = {},
       const QString &hoverLabel = QStringLiteral("Original"),
@@ -93,9 +92,6 @@ private:
   void removeQuote(QWidget *card);
   void clearQuotes();
   void updateQuoteTranslation();
-  // Renders a message, showing its quotes as blocks.
-  void insertMessageBody(QTextCursor &cursor, const QString &message,
-                         const QTextCharFormat &format);
 
   ChatSession *session_;
   QLabel *status_;
@@ -103,7 +99,7 @@ private:
   QTimer *typingAnimation_;
   int typingAnimationFrame_ = 0;
   QStackedWidget *viewStack_;
-  QTextBrowser *log_;
+  ChatLog *log_;
   ChatImagePreviewWidget *imageViewer_;
   ChatInput *input_;
   QPushButton *translateButton_;

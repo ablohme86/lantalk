@@ -19,7 +19,9 @@ Disconnected conversations reject new messages until the connection returns.
 The GUI disables the input and shows an italic reconnect prompt; the TUI keeps
 its input usable for slash commands such as `/connect` and shows the reconnect
 prompt in the status line above it.
-Messages show local `[HH:mm]` timestamps. Tabs highlight when another
+The GUI shows each conversation as chat bubbles: received messages on the
+left in gray, your messages on the right in blue, with the local `HH:mm` time
+under each bubble (the TUI shows `[HH:mm]` timestamps). Tabs highlight when another
 conversation receives a message and clear the highlight when selected.
 The GUI starts with an 11 pt font; change it under Settings → Font Size.
 

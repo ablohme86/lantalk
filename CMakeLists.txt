@@ -38,6 +38,8 @@ add_library(lantalk_lib STATIC
     gui/dialogs.h
     gui/chatinput.cpp
     gui/chatinput.h
+    gui/chatlog.cpp
+    gui/chatlog.h
     gui/chattab.cpp
     gui/chattab.h
     gui/mainwindow.cpp

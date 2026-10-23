@@ -2,6 +2,7 @@
 
 #include "appconfig.h"
 #include "gui/chatinput.h"
+#include "gui/chatlog.h"
 #include "gui/dialogs.h"
 #include "protocol/chathistory.h"
 #include "protocol/chatsession.h"
@@ -34,32 +35,12 @@
 #include <QStackedWidget>
 #include <QStyle>
 #include <QSignalBlocker>
-#include <QTextBlock>
-#include <QTextBrowser>
-#include <QTextImageFormat>
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
-#include <QUrlQuery>
 #include <QVBoxLayout>
 
 #include <utility>
-
-namespace {
-
-QUrl attachmentActionUrl(const QString &action, const QString &path,
-                         const QString &name = {}) {
-  QUrl url;
-  url.setScheme(QStringLiteral("lantalk"));
-  url.setHost(action);
-  QUrlQuery query;
-  query.addQueryItem(QStringLiteral("path"), path);
-  if (!name.isEmpty()) query.addQueryItem(QStringLiteral("name"), name);
-  url.setQuery(query);
-  return url;
-}
-
-} // namespace
 
 class ChatImagePreviewWidget final : public QWidget {
 public:
@@ -112,10 +93,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   auto *layout = new QVBoxLayout(this);
   status_ = new QLabel(QStringLiteral("Performing nickname handshake…"), this);
   viewStack_ = new QStackedWidget(this);
-  log_ = new QTextBrowser(this);
-  log_->setReadOnly(true);
-  log_->setOpenLinks(false);
-  log_->setOpenExternalLinks(false);
+  log_ = new ChatLog(this);
   imageViewer_ = new ChatImagePreviewWidget(this);
   viewStack_->addWidget(log_);
   viewStack_->addWidget(imageViewer_);
@@ -222,20 +200,9 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
             status_->setText(QStringLiteral("Connected to %1").arg(name));
             emit titleChanged();
           });
-  connect(log_, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
-    if (url.scheme() != QStringLiteral("lantalk")) {
-      return;
-    }
-    const QString path =
-        QUrlQuery(url).queryItemValue(QStringLiteral("path"));
-    if (path.isEmpty()) return;
-    if (url.host() == QStringLiteral("save-as")) {
-      const QString name =
-          QUrlQuery(url).queryItemValue(QStringLiteral("name"));
-      saveAttachmentAs(path, name);
-      return;
-    }
-    if (url.host() != QStringLiteral("view-image")) return;
+  connect(log_, &ChatLog::saveAttachmentRequested, this,
+          &ChatTab::saveAttachmentAs);
+  connect(log_, &ChatLog::imageRequested, this, [this](const QString &path) {
     const QPixmap image(path);
     if (image.isNull()) {
       return;
@@ -542,30 +509,6 @@ void ChatTab::updateQuoteTranslation() {
   }
 }
 
-void ChatTab::insertMessageBody(QTextCursor &cursor, const QString &message,
-                                const QTextCharFormat &format) {
-  QTextBlockFormat quoteBlock;
-  quoteBlock.setLeftMargin(12);
-  quoteBlock.setTopMargin(2);
-  quoteBlock.setBottomMargin(2);
-  quoteBlock.setBackground(QColor(127, 127, 127, 40));
-  auto quoteFormat = format;
-  quoteFormat.setFontFamilies(
-      {QFontDatabase::systemFont(QFontDatabase::FixedFont).family()});
-  bool first = true;
-  for (const auto &segment : QuotedMessage::parse(message)) {
-    if (segment.quote) {
-      cursor.insertBlock(quoteBlock, quoteFormat);
-      // Line breaks become blocks that keep the quote's block format.
-      cursor.insertText(segment.text, quoteFormat);
-    } else {
-      if (!first) cursor.insertBlock(QTextBlockFormat(), format);
-      cursor.insertText(segment.text, format);
-    }
-    first = false;
-  }
-}
-
 void ChatTab::retryConnection() {
   if (connected_ || reconnectAddress_.isEmpty() || reconnectPort_ == 0) {
     return;
@@ -576,15 +519,7 @@ void ChatTab::retryConnection() {
 }
 
 void ChatTab::appendSystemMessage(const QString &message) {
-  auto cursor = log_->textCursor();
-  cursor.movePosition(QTextCursor::End);
-  QTextCharFormat format;
-  format.setFontItalic(true);
-  format.setFontUnderline(true);
-  format.setForeground(QColor(150, 160, 168));
-  cursor.insertText(QStringLiteral("* %1").arg(message), format);
-  cursor.insertBlock();
-  log_->setTextCursor(cursor);
+  log_->appendNotice(message);
 }
 
 void ChatTab::refreshTranslationAvailability() {
@@ -664,7 +599,7 @@ void ChatTab::send() {
 
 void ChatTab::received(const QString &message, const QString &originalMessage) {
   const auto timestamp = QDateTime::currentDateTime();
-  const auto cursor = appendMessage(session_->peerName(), message,
+  const int messageId = appendMessage(session_->peerName(), message,
                                     originalMessage,
                                     QStringLiteral("Original"), false,
                                     timestamp);
@@ -672,7 +607,7 @@ void ChatTab::received(const QString &message, const QString &originalMessage) {
                       session_->peerName(), message, timestamp);
   const int index = incomingMessages_.size();
   incomingMessages_.append(
-      {message, cursor, !originalMessage.isEmpty(), false});
+      {message, messageId, !originalMessage.isEmpty(), false});
   emit incomingMessageReceived();
   if (liveTranslate_ && originalMessage.isEmpty()) {
     incomingMessages_[index].notify = true;
@@ -747,41 +682,14 @@ void ChatTab::dropEvent(QDropEvent *event) {
   event->acceptProposedAction();
 }
 
-QTextCursor ChatTab::appendMessage(const QString &sender,
-                                   const QString &message,
-                                   const QString &hoverText,
-                                   const QString &hoverLabel,
-                                   bool historical,
-                                   const QDateTime &timestamp) {
-  auto cursor = log_->textCursor();
-  cursor.movePosition(QTextCursor::End);
-  const auto timestampText = ChatHistory::timestampPrefix(timestamp);
-  if (!timestampText.isEmpty()) {
-    QTextCharFormat timestampFormat;
-    timestampFormat.setFontItalic(historical);
-    timestampFormat.setForeground(QColor(150, 160, 168));
-    cursor.insertText(timestampText, timestampFormat);
-  }
-  QTextCharFormat senderFormat;
-  senderFormat.setFontWeight(QFont::Bold);
-  senderFormat.setFontItalic(historical);
-  cursor.insertText(sender + QStringLiteral(": "), senderFormat);
-  QTextCharFormat messageFormat;
-  messageFormat.setFontItalic(historical);
-  if (!hoverText.isEmpty()) {
-    messageFormat.setToolTip(
-        QStringLiteral("%1: %2").arg(hoverLabel, hoverText));
-  }
-  const int messageStart = cursor.position();
-  insertMessageBody(cursor, message, messageFormat);
-  const int messageEnd = cursor.position();
-  cursor.insertBlock(QTextBlockFormat());
-  log_->setTextCursor(cursor);
-
-  QTextCursor messageCursor(log_->document());
-  messageCursor.setPosition(messageStart);
-  messageCursor.setPosition(messageEnd, QTextCursor::KeepAnchor);
-  return messageCursor;
+int ChatTab::appendMessage(const QString &sender, const QString &message,
+                           const QString &hoverText,
+                           const QString &hoverLabel, bool historical,
+                           const QDateTime &timestamp) {
+  return log_->appendMessage(
+      sender == QStringLiteral("You"), message, timestamp, historical,
+      hoverText.isEmpty() ? QString()
+                          : QStringLiteral("%1: %2").arg(hoverLabel, hoverText));
 }
 
 void ChatTab::loadConversationHistory() {
@@ -797,33 +705,16 @@ void ChatTab::loadConversationHistory() {
 }
 
 void ChatTab::appendHistorySeparator() {
-  auto cursor = log_->textCursor();
-  cursor.movePosition(QTextCursor::End);
-  QTextCharFormat format;
-  format.setFontItalic(true);
-  format.setForeground(QColor(150, 160, 168));
-  cursor.insertText(QStringLiteral("──────── Earlier messages ────────"),
-                    format);
-  cursor.insertBlock();
-  log_->setTextCursor(cursor);
+  log_->appendNotice(QStringLiteral("──────── Earlier messages ────────"));
 }
 
 void ChatTab::setIncomingMessageText(IncomingMessage &incoming,
                                      const QString &text, bool translated,
                                      bool pending) {
-  QTextCharFormat format;
-  format.setFontItalic(pending);
-  if (translated) {
-    format.setToolTip(QStringLiteral("Original: %1")
-                          .arg(incoming.originalMessage));
-  }
-  auto &cursor = incoming.messageCursor;
-  const int start = cursor.selectionStart();
-  cursor.removeSelectedText();
-  insertMessageBody(cursor, text, format);
-  const int end = cursor.position();
-  cursor.setPosition(start);
-  cursor.setPosition(end, QTextCursor::KeepAnchor);
+  log_->setMessage(incoming.messageId, text, pending,
+                   translated ? QStringLiteral("Original: %1")
+                                    .arg(incoming.originalMessage)
+                              : QString());
   incoming.translated = translated;
   incoming.pending = pending;
 }
@@ -836,9 +727,6 @@ void ChatTab::replaceTranslationStatus(const QString &originalMessage,
       continue;
     }
     setIncomingMessageText(incoming, replacement, succeeded, false);
-    auto endCursor = log_->textCursor();
-    endCursor.movePosition(QTextCursor::End);
-    log_->setTextCursor(endCursor);
     // The translation, or the original if translating failed.
     if (std::exchange(incoming.notify, false)) {
       emit notifyIncoming(session_->peerName(),
@@ -900,39 +788,9 @@ void ChatTab::saveAttachmentAs(const QString &path,
   }
 }
 
-void ChatTab::appendFile(const QString &sender, const QString &name,
+void ChatTab::appendFile(const QString &, const QString &name,
                          const QString &path, const QString &mimeType,
                          bool received) {
-  auto cursor = log_->textCursor();
-  cursor.movePosition(QTextCursor::End);
-  if (!cursor.block().text().isEmpty()) {
-    cursor.insertBlock();
-  }
-  QTextCharFormat senderFormat;
-  senderFormat.setFontWeight(QFont::Bold);
-  cursor.insertText(sender + QStringLiteral(" sent: "), senderFormat);
-  QTextCharFormat nameFormat;
-  nameFormat.setFontItalic(true);
-  cursor.insertText(name, nameFormat);
-  if (received) {
-    QTextCharFormat saveFormat;
-    saveFormat.setAnchor(true);
-    saveFormat.setAnchorHref(
-        attachmentActionUrl(QStringLiteral("save-as"), path, name).toString());
-    saveFormat.setFontUnderline(true);
-    cursor.insertText(QStringLiteral(" (Save as...)"), saveFormat);
-  }
-  cursor.insertBlock();
-  if (mimeType.startsWith(QStringLiteral("image/"))) {
-    QTextImageFormat thumbnail;
-    thumbnail.setName(QUrl::fromLocalFile(path).toString());
-    thumbnail.setWidth(360);
-    thumbnail.setAnchor(true);
-    thumbnail.setAnchorHref(
-        attachmentActionUrl(QStringLiteral("view-image"), path).toString());
-    thumbnail.setToolTip(QStringLiteral("Click to view image in chat"));
-    cursor.insertImage(thumbnail);
-    cursor.insertBlock();
-  }
-  log_->setTextCursor(cursor);
+  log_->appendFile(!received, name, path, mimeType,
+                   QDateTime::currentDateTime());
 }

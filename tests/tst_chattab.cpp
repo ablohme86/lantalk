@@ -1,6 +1,7 @@
 #include "testsupport.h"
 
 #include "gui/chatinput.h"
+#include "gui/chatlog.h"
 #include "gui/chattab.h"
 #include "translationrestorer.h"
 
@@ -8,7 +9,6 @@
 #include <QCheckBox>
 #include <QPlainTextEdit>
 #include <QClipboard>
-#include <QTextBrowser>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -178,7 +178,7 @@ private slots:
              QStringLiteral("Look:\n[quote]\nint x = 1;\n    return x;\n// edited\n[/quote]"));
     QTRY_VERIFY(tab.findChild<QCheckBox *>() == nullptr);
 
-    const auto log = tab.findChild<QTextBrowser *>()->toPlainText();
+    const auto log = tab.findChild<ChatLog *>()->toPlainText();
     QVERIFY(log.contains(QStringLiteral("    return x;")));
     QVERIFY(!log.contains(QStringLiteral("[quote]")));
   }
@@ -287,6 +287,57 @@ private slots:
       });
     };
     QTRY_VERIFY(showsStatus());
+  }
+
+  void bubblesSitOnTheirSides() {
+    ChatLog log;
+    log.resize(520, 520);
+    log.show();
+    const auto now = QDateTime::currentDateTime();
+    log.appendNotice(QStringLiteral("──────── Earlier messages ────────"));
+    log.appendNotice(QStringLiteral("Connected to bob"));
+    log.appendMessage(false, QStringLiteral("Hei! Hvordan går det?"), now);
+    const int sent = log.appendMessage(true, QStringLiteral("Bra, takk!"), now);
+    log.appendMessage(
+        true,
+        QStringLiteral("Look at this:\n[quote]\nstatic constexpr int MinPackRadius = 3;\n"
+                       "    return radius;\n[/quote]"),
+        now);
+    const int pending = log.appendMessage(false, QStringLiteral("x"), now);
+    log.setMessage(pending, QStringLiteral("Translating incoming message..."),
+                   true, {});
+    log.setMessage(pending,
+                   QStringLiteral("A much longer received message that has to wrap "
+                                  "over several lines because it is wider than the "
+                                  "bubble is allowed to be."),
+                   false, QStringLiteral("Original: ..."));
+    QTest::qWait(50);
+    // LANTALK_SCREENSHOT=<file.png> saves the rendered log for a visual check.
+    const auto screenshot = qEnvironmentVariable("LANTALK_SCREENSHOT");
+    if (!screenshot.isEmpty()) log.grab().save(screenshot);
+
+    const auto bubbles = log.findChildren<QLabel *>();
+    const auto bubbleWith = [&bubbles](const QString &text) -> QLabel * {
+      for (auto *label : bubbles) {
+        if (label->property("plainText").toString().startsWith(text)) return label;
+      }
+      return nullptr;
+    };
+    auto *received = bubbleWith(QStringLiteral("Hei!"));
+    auto *mine = bubbleWith(QStringLiteral("Bra, takk!"));
+    auto *wrapped = bubbleWith(QStringLiteral("A much longer"));
+    QVERIFY(received && mine && wrapped);
+    const auto left = received->mapTo(&log, QPoint(0, 0)).x();
+    const auto right = mine->mapTo(&log, QPoint(mine->width(), 0)).x();
+    QVERIFY2(left < 40, qPrintable(QString::number(left)));
+    QVERIFY2(right > log.viewport()->width() - 40, qPrintable(QString::number(right)));
+    QVERIFY(wrapped->width() <= log.viewport()->width() * 3 / 4);
+    // Wrapped onto more lines than a one-line bubble.
+    QVERIFY(wrapped->height() >= mine->height() + wrapped->fontMetrics().lineSpacing());
+    QCOMPARE(wrapped->toolTip(), QStringLiteral("Original: ..."));
+    QVERIFY(!wrapped->font().italic());
+    Q_UNUSED(sent);
+
   }
 
   void savedTranslationResumesAndChecksButton() {

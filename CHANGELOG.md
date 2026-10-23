@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Changed
+
+- The GUI shows conversations as chat bubbles: received messages on the
+  left in gray, sent messages on the right in blue, each with its time
+  below. Quotes appear as monospace blocks inside the bubble, translations
+  replace the bubble's text with the original in its tooltip, and
+  connection notices and the history divider are centred between the
+  bubbles. Files appear as bubbles with a `Save as...` link and image
+  thumbnail.
+
 ## v1.5.0 - 2026-10-23
 
 ### Added
