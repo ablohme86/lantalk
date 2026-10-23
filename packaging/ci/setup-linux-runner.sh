@@ -2,7 +2,7 @@
 # Registers a GitHub Actions runner for lantalk (label lantalk-linux) on a
 # Linux machine that already has podman, git and gh, such as the one running
 # allglider's runner. It lives in its own folder and runs as its own systemd
-# service, next to allglider's.
+# user service, like allglider's, with lingering so it runs without a login.
 #
 #   packaging/ci/setup-linux-runner.sh <registration token>
 #
@@ -10,7 +10,7 @@
 #   gh api -X POST repos/ablohme86/lantalk/actions/runners/registration-token -q .token
 #
 # REPO, RUNNER_DIR, NAME and LABELS override the defaults below. Run it as the
-# user the runner should build as (not root); it uses sudo for the service.
+# user the runner should build as (not root).
 set -euo pipefail
 
 token="${1:?usage: setup-linux-runner.sh <registration token>}"
@@ -36,8 +36,32 @@ echo "==> Registering $name ($labels) for $repo"
 ./config.sh --unattended --url "https://github.com/$repo" --token "$token" \
   --name "$name" --labels "$labels" --work _work --replace
 
-echo "==> Installing the service"
-sudo ./svc.sh install "$USER"
-sudo ./svc.sh start
-sudo ./svc.sh status | head -5
+service="actions-runner-$(basename "$repo").service"
+echo "==> Installing the user service $service"
+mkdir -p "$HOME/.config/systemd/user"
+cat > "$HOME/.config/systemd/user/$service" <<UNIT
+[Unit]
+Description=GitHub Actions runner ($repo)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=$runner_dir
+ExecStart=$runner_dir/run.sh
+Restart=always
+RestartSec=10
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+
+[Install]
+WantedBy=default.target
+UNIT
+systemctl --user daemon-reload
+systemctl --user enable --now "$service"
+# Keeps user services running while nobody is logged in.
+if [[ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null)" != yes ]]; then
+  loginctl enable-linger "$USER"
+fi
+systemctl --user --no-pager status "$service" | head -3
 echo "Done: the runner '$name' ($labels) is waiting for jobs."
