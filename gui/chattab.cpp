@@ -210,10 +210,11 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       [this](bool active, const QString &sourceLanguage,
              const QString &targetLanguage) {
         status_->setText(
-            active ? QStringLiteral(
-                         "The other user enabled Live Translate (%1 → %2).")
-                         .arg(sourceLanguage, targetLanguage)
-                   : QStringLiteral("The other user disabled Live Translate."));
+            active ? QStringLiteral("%1 enabled Live Translate (%2 → %3).")
+                         .arg(session_->peerName(), sourceLanguage,
+                              targetLanguage)
+                   : QStringLiteral("%1 disabled Live Translate.")
+                         .arg(session_->peerName()));
       });
   connect(session_, &ChatSession::disconnected, this, [this] {
     status_->setText(QStringLiteral("Disconnected"));

@@ -765,12 +765,14 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
                 setStatus(message);
             });
     connect(session, &ChatSession::peerLiveTranslationChanged, this,
-            [this](bool active, const QString &sourceLanguage,
+            [this, session](bool active, const QString &sourceLanguage,
                    const QString &targetLanguage) {
                 setStatus(active
-                              ? QStringLiteral("The other user enabled Live Translate (%1 → %2).")
-                                    .arg(sourceLanguage, targetLanguage)
-                              : QStringLiteral("The other user disabled Live Translate."));
+                              ? QStringLiteral("%1 enabled Live Translate (%2 → %3).")
+                                    .arg(session->peerName(), sourceLanguage,
+                                         targetLanguage)
+                              : QStringLiteral("%1 disabled Live Translate.")
+                                    .arg(session->peerName()));
             });
     connect(session, &ChatSession::fileReceived, this, [this, session](const QString &name, const QString &path, const QString &) {
         const int index = std::find_if(conversations_.cbegin(), conversations_.cend(),
