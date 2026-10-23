@@ -38,20 +38,26 @@ private slots:
   void sendText(const QString &text);
 
 private:
-  struct PendingIncomingTranslation {
+  struct IncomingMessage {
     QString originalMessage;
-    QTextCursor statusCursor;
+    QTextCursor messageCursor;
+    bool translated = false;
+    bool pending = false;
   };
 
   void dragEnterEvent(QDragEnterEvent *event) override;
   void dropEvent(QDropEvent *event) override;
-  void appendMessage(const QString &sender, const QString &message,
-                     const QString &hoverText = {},
-                     const QString &hoverLabel = QStringLiteral("Original"));
-  QTextCursor appendTranslationStatus(const QString &sender,
-                                      const QString &message);
+  QTextCursor appendMessage(
+      const QString &sender, const QString &message,
+      const QString &hoverText = {},
+      const QString &hoverLabel = QStringLiteral("Original"));
+  void translatePendingIncomingMessages();
+  void translateIncomingMessage(int index);
+  void setIncomingMessageText(IncomingMessage &incoming,
+                             const QString &text, bool translated,
+                             bool pending);
   void replaceTranslationStatus(const QString &originalMessage,
-                                const QString &replacement);
+                                const QString &replacement, bool succeeded);
   void clearOutgoingTranslationStatus();
   void saveAttachmentAs(const QString &path, const QString &suggestedName);
   void appendFile(const QString &sender, const QString &name,
@@ -72,7 +78,7 @@ private:
   bool fileSendUiActive_ = false;
   QString fileSendPreviousInput_;
   QString pendingOriginal_;
-  QList<PendingIncomingTranslation> pendingIncomingTranslations_;
+  QList<IncomingMessage> incomingMessages_;
   QString myLanguage_;
   QString peerLanguage_;
 };

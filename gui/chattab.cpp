@@ -216,6 +216,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     liveTranslate_ = true;
     status_->setText(QStringLiteral("Live Translate: %1 ↔ %2")
                          .arg(myLanguage_, peerLanguage_));
+    translatePendingIncomingMessages();
   });
   connect(session_, &ChatSession::liveTranslationDenied, this,
           [this](const QString &message) {
@@ -255,7 +256,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(&incomingTranslator_, &OllamaClient::failed, this,
           [this](const QString &error, const QString &originalMessage) {
             status_->setText(error);
-            replaceTranslationStatus(originalMessage, originalMessage);
+            replaceTranslationStatus(originalMessage, originalMessage, false);
           });
 }
 
@@ -316,15 +317,35 @@ void ChatTab::send() {
 }
 
 void ChatTab::received(const QString &message, const QString &originalMessage) {
-  if (!liveTranslate_) {
-    appendMessage(session_->peerName(), message, originalMessage);
+  const auto cursor = appendMessage(session_->peerName(), message,
+                                    originalMessage);
+  const int index = incomingMessages_.size();
+  incomingMessages_.append(
+      {message, cursor, !originalMessage.isEmpty(), false});
+  if (liveTranslate_ && originalMessage.isEmpty()) {
+    translateIncomingMessage(index);
+  }
+}
+
+void ChatTab::translatePendingIncomingMessages() {
+  for (int index = 0; index < incomingMessages_.size(); ++index) {
+    translateIncomingMessage(index);
+  }
+}
+
+void ChatTab::translateIncomingMessage(int index) {
+  if (!liveTranslate_ || index < 0 || index >= incomingMessages_.size()) {
     return;
   }
-  auto statusCursor = appendTranslationStatus(
-      session_->peerName(),
-      QStringLiteral("Translating incoming message... Stand by."));
-  pendingIncomingTranslations_.append({message, statusCursor});
-  incomingTranslator_.translate(message, peerLanguage_, myLanguage_);
+  auto &incoming = incomingMessages_[index];
+  if (incoming.translated || incoming.pending) return;
+
+  incoming.pending = true;
+  setIncomingMessageText(incoming,
+                         QStringLiteral("Translating incoming message..."),
+                         false, true);
+  incomingTranslator_.translate(incoming.originalMessage, peerLanguage_,
+                                myLanguage_);
 }
 
 void ChatTab::outgoingTranslationFinished(const QString &translation,
@@ -340,7 +361,7 @@ void ChatTab::outgoingTranslationFinished(const QString &translation,
 
 void ChatTab::incomingTranslationFinished(const QString &translation,
                                           const QString &originalMessage) {
-  replaceTranslationStatus(originalMessage, translation);
+  replaceTranslationStatus(originalMessage, translation, true);
 }
 
 void ChatTab::sendText(const QString &text) {
@@ -364,9 +385,10 @@ void ChatTab::dropEvent(QDropEvent *event) {
   event->acceptProposedAction();
 }
 
-void ChatTab::appendMessage(const QString &sender, const QString &message,
-                            const QString &hoverText,
-                            const QString &hoverLabel) {
+QTextCursor ChatTab::appendMessage(const QString &sender,
+                                   const QString &message,
+                                   const QString &hoverText,
+                                   const QString &hoverLabel) {
   auto cursor = log_->textCursor();
   cursor.movePosition(QTextCursor::End);
   QTextCharFormat senderFormat;
@@ -377,55 +399,48 @@ void ChatTab::appendMessage(const QString &sender, const QString &message,
     messageFormat.setToolTip(
         QStringLiteral("%1: %2").arg(hoverLabel, hoverText));
   }
-  cursor.insertText(message, messageFormat);
-  cursor.insertBlock();
-  log_->setTextCursor(cursor);
-}
-
-QTextCursor ChatTab::appendTranslationStatus(const QString &sender,
-                                             const QString &message) {
-  auto cursor = log_->textCursor();
-  cursor.movePosition(QTextCursor::End);
-  QTextCharFormat senderFormat;
-  senderFormat.setFontWeight(QFont::Bold);
-  cursor.insertText(sender + QStringLiteral(": "), senderFormat);
   const int messageStart = cursor.position();
-  QTextCharFormat messageFormat;
-  messageFormat.setFontItalic(true);
   cursor.insertText(message, messageFormat);
   const int messageEnd = cursor.position();
   cursor.insertBlock();
   log_->setTextCursor(cursor);
 
-  QTextCursor statusCursor(log_->document());
-  statusCursor.setPosition(messageStart);
-  statusCursor.setPosition(messageEnd, QTextCursor::KeepAnchor);
-  return statusCursor;
+  QTextCursor messageCursor(log_->document());
+  messageCursor.setPosition(messageStart);
+  messageCursor.setPosition(messageEnd, QTextCursor::KeepAnchor);
+  return messageCursor;
+}
+
+void ChatTab::setIncomingMessageText(IncomingMessage &incoming,
+                                     const QString &text, bool translated,
+                                     bool pending) {
+  QTextCharFormat format;
+  format.setFontItalic(pending);
+  if (translated) {
+    format.setToolTip(QStringLiteral("Original: %1")
+                          .arg(incoming.originalMessage));
+  }
+  incoming.messageCursor.insertText(text, format);
+  const int end = incoming.messageCursor.position();
+  incoming.messageCursor.setPosition(end - text.size());
+  incoming.messageCursor.setPosition(end, QTextCursor::KeepAnchor);
+  incoming.translated = translated;
+  incoming.pending = pending;
 }
 
 void ChatTab::replaceTranslationStatus(const QString &originalMessage,
-                                      const QString &replacement) {
-  for (auto pending = pendingIncomingTranslations_.begin();
-       pending != pendingIncomingTranslations_.end(); ++pending) {
-    if (pending->originalMessage != originalMessage) {
+                                      const QString &replacement,
+                                      bool succeeded) {
+  for (auto &incoming : incomingMessages_) {
+    if (!incoming.pending || incoming.originalMessage != originalMessage) {
       continue;
     }
-    auto cursor = pending->statusCursor;
-    pendingIncomingTranslations_.erase(pending);
-    QTextCharFormat messageFormat;
-    messageFormat.setFontItalic(false);
-    if (replacement != originalMessage) {
-      messageFormat.setToolTip(
-          QStringLiteral("Original: %1").arg(originalMessage));
-    }
-    cursor.insertText(replacement, messageFormat);
+    setIncomingMessageText(incoming, replacement, succeeded, false);
     auto endCursor = log_->textCursor();
     endCursor.movePosition(QTextCursor::End);
     log_->setTextCursor(endCursor);
     return;
   }
-  appendMessage(session_->peerName(), replacement,
-                replacement == originalMessage ? QString() : originalMessage);
 }
 
 void ChatTab::clearOutgoingTranslationStatus() {

@@ -20,6 +20,8 @@
 - Chat windows have an attachment icon button that opens a file picker to send
   a file.
 - The GUI Settings menu has a persistent font size selector.
+- Enabling Live Translate translates earlier incoming messages that have no
+  translation yet.
 - File sends are asynchronous and show italic progress in the chat input.
 - Received attachments are stored in the OS cache, removed when their chat
   closes, and include a `Save as...` link. Sent attachments show only the
