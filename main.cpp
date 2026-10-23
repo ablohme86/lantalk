@@ -1,8 +1,10 @@
 #include <QApplication>
 #include <QAbstractSocket>
 #include <QCoreApplication>
+#include <QFont>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QSettings>
 #include <QTimer>
 
 #include "gui/appicon.h"
@@ -132,6 +134,15 @@ int main(int argc, char *argv[]) {
   QApplication application(argc, argv);
   application.setOrganizationName(QStringLiteral("LANChat"));
   application.setApplicationName(QStringLiteral("LANChat"));
+  auto font = application.font();
+  const int configuredFontSize =
+      QSettings()
+          .value(QStringLiteral("appearance/fontSize"), font.pointSize())
+          .toInt();
+  if (configuredFontSize >= 8 && configuredFontSize <= 32) {
+    font.setPointSize(configuredFontSize);
+    application.setFont(font);
+  }
   QLocalServer instanceServer;
   const auto instanceResult = startInstanceServer(instanceServer);
   if (instanceResult == InstanceResult::Existing) return 0;

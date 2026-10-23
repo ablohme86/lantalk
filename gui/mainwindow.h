@@ -29,6 +29,7 @@ protected:
 
 private slots:
   void showSettings();
+  void showFontSizeDialog();
   void connectToHost();
   void showConnectDialog();
   void acceptConnection();

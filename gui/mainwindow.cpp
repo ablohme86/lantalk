@@ -11,6 +11,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QEvent>
+#include <QFont>
 #include <QGuiApplication>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -44,11 +45,17 @@ MainWindow::MainWindow() {
 
   auto *chatMenu = menuBar()->addMenu(QStringLiteral("Chat"));
   auto *connectToAction = chatMenu->addAction(QStringLiteral("Connect To…"));
-  auto *settingsAction = menuBar()->addAction(QStringLiteral("Settings"));
+  auto *settingsMenu = menuBar()->addMenu(QStringLiteral("Settings"));
+  auto *fontSizeAction = settingsMenu->addAction(QStringLiteral("Font Size"));
+  settingsMenu->addSeparator();
+  auto *settingsAction =
+      settingsMenu->addAction(QStringLiteral("General..."));
   applyDarkMenuStyle();
   connect(connectToAction, &QAction::triggered, this,
           &MainWindow::showConnectDialog);
   connect(settingsAction, &QAction::triggered, this, &MainWindow::showSettings);
+  connect(fontSizeAction, &QAction::triggered, this,
+          &MainWindow::showFontSizeDialog);
   setupTrayIcon();
   connect(host_, QOverload<int>::of(&QComboBox::activated), this,
           [this](int index) {
@@ -79,6 +86,23 @@ void MainWindow::showSettings() {
     static_cast<ChatTab *>(tabs_->widget(index))
         ->refreshTranslationAvailability();
   }
+}
+
+void MainWindow::showFontSizeDialog() {
+  const auto currentFont = QApplication::font();
+  const int currentSize = currentFont.pointSize() > 0
+                              ? currentFont.pointSize()
+                              : 10;
+  bool accepted = false;
+  const int fontSize = QInputDialog::getInt(
+      this, QStringLiteral("Font Size"), QStringLiteral("Font size (pt):"),
+      currentSize, 8, 32, 1, &accepted);
+  if (!accepted) return;
+
+  auto font = currentFont;
+  font.setPointSize(fontSize);
+  QApplication::setFont(font);
+  QSettings().setValue(QStringLiteral("appearance/fontSize"), fontSize);
 }
 
 void MainWindow::setupTrayIcon() {
