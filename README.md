@@ -40,8 +40,11 @@ address ranges. LANChat filters its own discovery ID and local interface
 addresses from the host list. Selecting a discovered host connects immediately.
 
 Drop images or files into a conversation to send them to the connected host.
-Images are displayed in the chat log; received files are stored in the
-`LANChat` folder under the operating system's Downloads location.
+Image thumbnails appear in the chat log and open in an in-chat viewer when
+clicked. Received attachments are kept in LANChat's operating-system cache
+until that conversation is closed. Use the `Save as...` link beside any
+attachment to copy it to a chosen location. File transfers show progress in the
+chat input, and launching LANChat again activates the running instance.
 
 ## Source layout
 

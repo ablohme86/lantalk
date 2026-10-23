@@ -14,11 +14,33 @@ ChatSession::ChatSession(QTcpSocket *socket, QObject *parent)
     : QObject(parent), socket_(socket) {
   socket_->setParent(this);
   connect(socket_, &QTcpSocket::readyRead, this, &ChatSession::readData);
-  connect(socket_, &QTcpSocket::disconnected, this, &ChatSession::disconnected);
+  outgoingFilePump_.setSingleShot(true);
+  connect(&outgoingFilePump_, &QTimer::timeout, this,
+          &ChatSession::sendNextFileChunk);
+  connect(socket_, &QTcpSocket::bytesWritten, this, [this](qint64) {
+    if (outgoingFile_ && socket_->bytesToWrite() < 128 * 1024 &&
+        !outgoingFilePump_.isActive()) {
+      outgoingFilePump_.start(0);
+    }
+  });
+  connect(socket_, &QTcpSocket::disconnected, this, [this] {
+    cancelOutgoingFiles();
+    emit disconnected();
+  });
   connect(socket_, &QTcpSocket::errorOccurred, this,
           [this](QAbstractSocket::SocketError) {
             emit statusChanged(socket_->errorString());
           });
+}
+
+ChatSession::~ChatSession() {
+  outgoingFilePump_.stop();
+  if (outgoingFile_) {
+    outgoingFile_->close();
+  }
+  for (const auto &path : receivedFilePaths_) {
+    QFile::remove(path);
+  }
 }
 
 void ChatSession::beginHandshake(const QString &nickname) {
@@ -60,26 +82,146 @@ bool ChatSession::sendFile(const QString &filePath) {
         QStringLiteral("Files larger than 50 MB cannot be sent."));
     return false;
   }
+  file.close();
 
-  const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-  const auto name = QFileInfo(filePath).fileName().toUtf8().toBase64(
-      QByteArray::Base64UrlEncoding);
-  const auto mime =
-      QMimeDatabase().mimeTypeForFile(filePath).name().toUtf8().toBase64(
-          QByteArray::Base64UrlEncoding);
-  sendLine(QStringLiteral("FILE_BEGIN %1 %2 %3 %4")
-               .arg(id, QString::fromLatin1(name), QString::fromLatin1(mime))
-               .arg(file.size()));
-  while (!file.atEnd()) {
-    const auto chunk =
-        file.read(16 * 1024).toBase64(QByteArray::Base64UrlEncoding);
-    sendLine(
-        QStringLiteral("FILE_CHUNK %1 %2").arg(id, QString::fromLatin1(chunk)));
+  outgoingFilePaths_.enqueue(filePath);
+  if (!outgoingFileBatchActive_) {
+    outgoingFileBatchActive_ = true;
   }
-  sendLine(QStringLiteral("FILE_END %1").arg(id));
-  emit fileSent(QFileInfo(filePath).fileName(), filePath,
-                QMimeDatabase().mimeTypeForFile(filePath).name());
+  startNextFile();
   return true;
+}
+
+void ChatSession::startNextFile() {
+  if (outgoingFile_) {
+    return;
+  }
+  while (!outgoingFilePaths_.isEmpty()) {
+    const auto path = outgoingFilePaths_.dequeue();
+    auto *file = new QFile(path, this);
+    if (!file->open(QIODevice::ReadOnly)) {
+      emit statusChanged(
+          QStringLiteral("Cannot read %1.").arg(QFileInfo(path).fileName()));
+      file->deleteLater();
+      continue;
+    }
+    if (file->size() > MaximumFileSize) {
+      emit statusChanged(
+          QStringLiteral("Files larger than 50 MB cannot be sent."));
+      file->deleteLater();
+      continue;
+    }
+
+    outgoingFile_ = file;
+    outgoingFilePath_ = path;
+    outgoingFileName_ = QFileInfo(path).fileName();
+    outgoingMimeType_ = QMimeDatabase().mimeTypeForFile(path).name();
+    outgoingFileSize_ = file->size();
+    outgoingBytesSent_ = 0;
+    outgoingFileId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const auto encodedName = outgoingFileName_.toUtf8().toBase64(
+        QByteArray::Base64UrlEncoding);
+    const auto encodedMime = outgoingMimeType_.toUtf8().toBase64(
+        QByteArray::Base64UrlEncoding);
+    sendLine(QStringLiteral("FILE_BEGIN %1 %2 %3 %4")
+                 .arg(outgoingFileId_, QString::fromLatin1(encodedName),
+                      QString::fromLatin1(encodedMime))
+                 .arg(outgoingFileSize_));
+    emit fileSendProgressChanged(0);
+    outgoingFilePump_.start(20);
+    return;
+  }
+
+  if (outgoingFileBatchActive_) {
+    outgoingFileBatchActive_ = false;
+    emit fileSendCompleted();
+  }
+}
+
+void ChatSession::sendNextFileChunk() {
+  if (!outgoingFile_) {
+    return;
+  }
+  if (socket_->state() != QAbstractSocket::ConnectedState) {
+    cancelOutgoingFiles();
+    return;
+  }
+
+  if (outgoingFile_->atEnd()) {
+    sendLine(QStringLiteral("FILE_END %1").arg(outgoingFileId_));
+    const auto name = outgoingFileName_;
+    const auto path = outgoingFilePath_;
+    const auto mimeType = outgoingMimeType_;
+    outgoingFile_->close();
+    outgoingFile_->deleteLater();
+    outgoingFile_ = nullptr;
+    outgoingFileId_.clear();
+    outgoingFileName_.clear();
+    outgoingFilePath_.clear();
+    outgoingMimeType_.clear();
+    outgoingFileSize_ = 0;
+    outgoingBytesSent_ = 0;
+    emit fileSendProgressChanged(100);
+    emit fileSent(name, path, mimeType);
+    startNextFile();
+    return;
+  }
+
+  if (socket_->bytesToWrite() >= 256 * 1024) {
+    return;
+  }
+  const auto chunk = outgoingFile_->read(16 * 1024);
+  if (chunk.isEmpty()) {
+    if (outgoingFile_->error() == QFileDevice::NoError &&
+        outgoingFile_->atEnd()) {
+      outgoingFilePump_.start(0);
+      return;
+    }
+    emit statusChanged(QStringLiteral("Cannot read %1.").arg(outgoingFileName_));
+    sendLine(QStringLiteral("FILE_END %1").arg(outgoingFileId_));
+    outgoingFile_->close();
+    outgoingFile_->deleteLater();
+    outgoingFile_ = nullptr;
+    outgoingFileId_.clear();
+    outgoingFileName_.clear();
+    outgoingFilePath_.clear();
+    outgoingMimeType_.clear();
+    outgoingFileSize_ = 0;
+    outgoingBytesSent_ = 0;
+    startNextFile();
+    return;
+  }
+
+  const auto encodedChunk = chunk.toBase64(QByteArray::Base64UrlEncoding);
+  sendLine(QStringLiteral("FILE_CHUNK %1 %2")
+               .arg(outgoingFileId_, QString::fromLatin1(encodedChunk)));
+  outgoingBytesSent_ += chunk.size();
+  const int percent = outgoingFileSize_ == 0
+                          ? 100
+                          : static_cast<int>(outgoingBytesSent_ * 100 /
+                                             outgoingFileSize_);
+  emit fileSendProgressChanged(qMin(percent, 100));
+  outgoingFilePump_.start(0);
+}
+
+void ChatSession::cancelOutgoingFiles() {
+  outgoingFilePump_.stop();
+  if (outgoingFile_) {
+    outgoingFile_->close();
+    outgoingFile_->deleteLater();
+    outgoingFile_ = nullptr;
+  }
+  outgoingFilePaths_.clear();
+  outgoingFileId_.clear();
+  outgoingFileName_.clear();
+  outgoingFilePath_.clear();
+  outgoingMimeType_.clear();
+  outgoingFileSize_ = 0;
+  outgoingBytesSent_ = 0;
+  if (outgoingFileBatchActive_) {
+    outgoingFileBatchActive_ = false;
+    emit fileSendCompleted();
+  }
 }
 
 void ChatSession::requestLiveTranslation(const QString &sourceLanguage,
@@ -241,14 +383,16 @@ void ChatSession::processLine(const QString &line) {
                                              QByteArray::Base64UrlEncoding);
     const auto mime = QByteArray::fromBase64(parts.at(3).toLatin1(),
                                              QByteArray::Base64UrlEncoding);
-    if (!sizeIsValid || size < 0 || size > MaximumFileSize || name.isEmpty() ||
-        mime.isEmpty()) {
+    const auto safeName = QFileInfo(QString::fromUtf8(name)).fileName();
+    if (!sizeIsValid || size < 0 || size > MaximumFileSize ||
+        safeName.isEmpty() || safeName == QStringLiteral(".") ||
+        safeName == QStringLiteral("..") || mime.isEmpty()) {
       emit statusChanged(QStringLiteral("Rejected invalid file transfer."));
       return;
     }
     incomingFiles_.insert(
         parts.at(1),
-        {QString::fromUtf8(name), QString::fromUtf8(mime), size, {}});
+        {safeName, QString::fromUtf8(mime), size, {}});
     return;
   }
   if (parts.value(0) == QStringLiteral("FILE_CHUNK") && parts.size() == 3 &&
@@ -280,24 +424,37 @@ void ChatSession::processLine(const QString &line) {
       emit statusChanged(QStringLiteral("File transfer was incomplete."));
       return;
     }
-    const auto directory =
-        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) +
-        QStringLiteral("/LANChat");
+    const auto cacheDirectory =
+        QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
+    if (cacheDirectory.isEmpty()) {
+      emit statusChanged(QStringLiteral("Cannot locate the LANChat cache folder."));
+      return;
+    }
+    const auto directory = QDir(cacheDirectory).filePath(QStringLiteral("received"));
     if (!QDir().mkpath(directory)) {
       emit statusChanged(
-          QStringLiteral("Cannot create the LANChat download folder."));
+          QStringLiteral("Cannot create the LANChat cache folder."));
+      return;
+    }
+    const auto safeName = QFileInfo(completed.name).fileName();
+    if (safeName.isEmpty() || safeName == QStringLiteral(".") ||
+        safeName == QStringLiteral("..")) {
+      emit statusChanged(QStringLiteral("Received file has an invalid name."));
       return;
     }
     const auto destination =
         QDir(directory).filePath(QStringLiteral("%1-%2").arg(
             QUuid::createUuid().toString(QUuid::WithoutBraces),
-            completed.name));
+            safeName));
     QFile destinationFile(destination);
     if (!destinationFile.open(QIODevice::WriteOnly) ||
         destinationFile.write(completed.data) != completed.data.size()) {
+      destinationFile.close();
+      QFile::remove(destination);
       emit statusChanged(QStringLiteral("Cannot save received file."));
       return;
     }
+    receivedFilePaths_.append(destination);
     emit fileReceived(completed.name, destination, completed.mimeType);
     return;
   }

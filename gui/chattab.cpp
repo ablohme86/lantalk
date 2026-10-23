@@ -6,6 +6,9 @@
 
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -15,13 +18,31 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QSaveFile>
 #include <QStackedWidget>
 #include <QSignalBlocker>
 #include <QTextBlock>
 #include <QTextBrowser>
 #include <QTextImageFormat>
 #include <QUrl>
+#include <QUrlQuery>
 #include <QVBoxLayout>
+
+namespace {
+
+QUrl attachmentActionUrl(const QString &action, const QString &path,
+                         const QString &name = {}) {
+  QUrl url;
+  url.setScheme(QStringLiteral("lanchat"));
+  url.setHost(action);
+  QUrlQuery query;
+  query.addQueryItem(QStringLiteral("path"), path);
+  if (!name.isEmpty()) query.addQueryItem(QStringLiteral("name"), name);
+  url.setQuery(query);
+  return url;
+}
+
+} // namespace
 
 class ChatImagePreviewWidget final : public QWidget {
 public:
@@ -58,7 +79,7 @@ private:
     if (!image_.isNull()) {
       imageLabel_->setPixmap(image_.scaled(imageLabel_->size(),
                                            Qt::KeepAspectRatio,
-                                           Qt::SmoothTransformation));
+                                           Qt::FastTransformation));
     }
   }
 
@@ -106,10 +127,19 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   });
   connect(session_, &ChatSession::statusChanged, status_, &QLabel::setText);
   connect(log_, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
-    const auto path = url.toLocalFile();
-    if (path.isEmpty()) {
+    if (url.scheme() != QStringLiteral("lanchat")) {
       return;
     }
+    const QString path =
+        QUrlQuery(url).queryItemValue(QStringLiteral("path"));
+    if (path.isEmpty()) return;
+    if (url.host() == QStringLiteral("save-as")) {
+      const QString name =
+          QUrlQuery(url).queryItemValue(QStringLiteral("name"));
+      saveAttachmentAs(path, name);
+      return;
+    }
+    if (url.host() != QStringLiteral("view-image")) return;
     const QPixmap image(path);
     if (image.isNull()) {
       return;
@@ -130,6 +160,38 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       [this](const QString &name, const QString &path, const QString &mime) {
         appendFile(session_->peerName(), name, path, mime);
       });
+  connect(session_, &ChatSession::fileSendProgressChanged, this,
+          [this](int percent) {
+            if (!fileSendUiActive_) {
+              fileSendPreviousInput_ = outgoingPending_ ? QString() : input_->text();
+              fileSendUiActive_ = true;
+            }
+            input_->setText(QStringLiteral("Sending file... Please wait... %1%")
+                                .arg(percent));
+            input_->setReadOnly(true);
+            auto font = input_->font();
+            font.setItalic(true);
+            input_->setFont(font);
+          });
+  connect(session_, &ChatSession::fileSendCompleted, this, [this] {
+    if (!fileSendUiActive_) return;
+    fileSendUiActive_ = false;
+    if (outgoingPending_) {
+      input_->setText(QStringLiteral("Translating message..."));
+      input_->setReadOnly(true);
+      auto font = input_->font();
+      font.setItalic(true);
+      input_->setFont(font);
+      fileSendPreviousInput_.clear();
+      return;
+    }
+    input_->setText(fileSendPreviousInput_);
+    input_->setReadOnly(false);
+    auto font = input_->font();
+    font.setItalic(false);
+    input_->setFont(font);
+    fileSendPreviousInput_.clear();
+  });
   connect(session_, &ChatSession::liveTranslationGranted, this, [this] {
     liveTranslate_ = true;
     status_->setText(QStringLiteral("Live Translate: %1 ↔ %2")
@@ -210,6 +272,9 @@ void ChatTab::configureTranslation() {
 }
 
 void ChatTab::send() {
+  if (fileSendUiActive_) {
+    return;
+  }
   const auto text = input_->text().trimmed();
   if (text.isEmpty() || outgoingPending_) {
     return;
@@ -343,11 +408,55 @@ void ChatTab::replaceTranslationStatus(const QString &originalMessage,
 }
 
 void ChatTab::clearOutgoingTranslationStatus() {
+  if (fileSendUiActive_) {
+    return;
+  }
   input_->clear();
   input_->setReadOnly(false);
   auto inputFont = input_->font();
   inputFont.setItalic(false);
   input_->setFont(inputFont);
+}
+
+void ChatTab::saveAttachmentAs(const QString &path,
+                               const QString &suggestedName) {
+  const auto destination = QFileDialog::getSaveFileName(
+      this, QStringLiteral("Save as..."),
+      suggestedName.isEmpty() ? QFileInfo(path).fileName() : suggestedName);
+  if (destination.isEmpty() ||
+      QFileInfo(destination).absoluteFilePath() ==
+          QFileInfo(path).absoluteFilePath()) {
+    return;
+  }
+  if (QFileInfo::exists(destination)) {
+    const auto answer = QMessageBox::question(
+        this, QStringLiteral("Overwrite file?"),
+        QStringLiteral("The selected file already exists. Overwrite it?"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (answer != QMessageBox::Yes) return;
+  }
+  QFile source(path);
+  QSaveFile target(destination);
+  if (!source.open(QIODevice::ReadOnly) || !target.open(QIODevice::WriteOnly)) {
+    target.cancelWriting();
+    QMessageBox::warning(this, QStringLiteral("Save failed"),
+                         QStringLiteral("Cannot save the selected file."));
+    return;
+  }
+  while (!source.atEnd()) {
+    const auto bytes = source.read(64 * 1024);
+    if ((bytes.isEmpty() && source.error() != QFileDevice::NoError) ||
+        target.write(bytes) != bytes.size()) {
+      target.cancelWriting();
+      QMessageBox::warning(this, QStringLiteral("Save failed"),
+                           QStringLiteral("Cannot save the selected file."));
+      return;
+    }
+  }
+  if (!target.commit()) {
+    QMessageBox::warning(this, QStringLiteral("Save failed"),
+                         QStringLiteral("Cannot save the selected file."));
+  }
 }
 
 void ChatTab::appendFile(const QString &sender, const QString &name,
@@ -359,24 +468,24 @@ void ChatTab::appendFile(const QString &sender, const QString &name,
   }
   QTextCharFormat senderFormat;
   senderFormat.setFontWeight(QFont::Bold);
-  cursor.insertText(sender + QStringLiteral(": sent "), senderFormat);
+  cursor.insertText(sender + QStringLiteral(" sent: "), senderFormat);
   QTextCharFormat nameFormat;
   nameFormat.setFontItalic(true);
-  if (mimeType.startsWith(QStringLiteral("image/"))) {
-    const auto imageUrl = QUrl::fromLocalFile(path);
-    nameFormat.setAnchor(true);
-    nameFormat.setAnchorHref(imageUrl.toString());
-    nameFormat.setFontUnderline(true);
-    nameFormat.setToolTip(QStringLiteral("Click to view image in chat"));
-  }
   cursor.insertText(name, nameFormat);
+  QTextCharFormat saveFormat;
+  saveFormat.setAnchor(true);
+  saveFormat.setAnchorHref(
+      attachmentActionUrl(QStringLiteral("save-as"), path, name).toString());
+  saveFormat.setFontUnderline(true);
+  cursor.insertText(QStringLiteral(" (Save as...)"), saveFormat);
   cursor.insertBlock();
   if (mimeType.startsWith(QStringLiteral("image/"))) {
     QTextImageFormat thumbnail;
     thumbnail.setName(QUrl::fromLocalFile(path).toString());
     thumbnail.setWidth(360);
     thumbnail.setAnchor(true);
-    thumbnail.setAnchorHref(QUrl::fromLocalFile(path).toString());
+    thumbnail.setAnchorHref(
+        attachmentActionUrl(QStringLiteral("view-image"), path).toString());
     thumbnail.setToolTip(QStringLiteral("Click to view image in chat"));
     cursor.insertImage(thumbnail);
     cursor.insertBlock();

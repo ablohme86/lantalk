@@ -121,6 +121,10 @@ void MainWindow::updateTrayIcon() {
 }
 
 void MainWindow::showFromTray() {
+  activateFromAnotherLaunch();
+}
+
+void MainWindow::activateFromAnotherLaunch() {
   if (isMinimized()) showNormal();
   else show();
   raise();
@@ -399,6 +403,7 @@ void MainWindow::refreshHostList() {
 void MainWindow::addSession(QTcpSocket *socket, const QString &initialTitle) {
   auto *session = new ChatSession(socket, this);
   auto *tab = new ChatTab(session, tabs_);
+  session->setParent(tab);
   const auto index = tabs_->addTab(tab, initialTitle);
   tabs_->setCurrentIndex(index);
   connect(session, &ChatSession::messageReceived, this,

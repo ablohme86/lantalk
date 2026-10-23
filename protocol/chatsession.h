@@ -3,8 +3,12 @@
 #include <QByteArray>
 #include <QHash>
 #include <QObject>
+#include <QQueue>
 #include <QString>
+#include <QStringList>
+#include <QTimer>
 
+class QFile;
 class QTcpSocket;
 
 class ChatSession final : public QObject {
@@ -12,6 +16,7 @@ class ChatSession final : public QObject {
 
 public:
   explicit ChatSession(QTcpSocket *socket, QObject *parent = nullptr);
+  ~ChatSession() override;
   void beginHandshake(const QString &nickname);
   void sendMessage(const QString &message, const QString &originalMessage = {});
   bool sendFile(const QString &filePath);
@@ -29,6 +34,8 @@ signals:
                 const QString &mimeType);
   void fileReceived(const QString &name, const QString &path,
                     const QString &mimeType);
+  void fileSendProgressChanged(int percent);
+  void fileSendCompleted();
   void liveTranslationGranted();
   void liveTranslationDenied(const QString &message);
   void peerLiveTranslationChanged(bool active, const QString &sourceLanguage,
@@ -38,10 +45,13 @@ signals:
 
 private slots:
   void readData();
+  void sendNextFileChunk();
 
 private:
   void processLine(const QString &line);
   void sendLine(const QString &line);
+  void startNextFile();
+  void cancelOutgoingFiles();
 
   struct IncomingFile {
     QString name;
@@ -59,4 +69,15 @@ private:
   bool peerTranslationActive_ = false;
   QString translationRequestId_;
   QHash<QString, IncomingFile> incomingFiles_;
+  QStringList receivedFilePaths_;
+  QQueue<QString> outgoingFilePaths_;
+  QFile *outgoingFile_ = nullptr;
+  QTimer outgoingFilePump_;
+  QString outgoingFileId_;
+  QString outgoingFileName_;
+  QString outgoingFilePath_;
+  QString outgoingMimeType_;
+  qint64 outgoingFileSize_ = 0;
+  qint64 outgoingBytesSent_ = 0;
+  bool outgoingFileBatchActive_ = false;
 };

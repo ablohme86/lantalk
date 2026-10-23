@@ -12,9 +12,17 @@
 - Launching from an interactive terminal now selects TUI automatically;
   `--tui` remains available to force it.
 
-### Fixed
+### Changed
 
-- The TUI no longer prints the connection confirmation twice.
 - GUI attachments always start on a new line. Image thumbnails appear in the
   conversation and open in a full-view chat panel with a close button when
   clicked.
+- File sends are asynchronous and show italic progress in the chat input.
+- Received attachments are stored in the OS cache and removed when their chat
+  closes; every attachment includes a `Save as...` link.
+- Starting LANChat again activates the existing process instead of opening a
+  second UI.
+
+### Fixed
+
+- The TUI no longer prints the connection confirmation twice.

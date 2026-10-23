@@ -26,6 +26,7 @@ class TerminalUi final : public QObject {
 public:
   explicit TerminalUi(QObject *parent = nullptr);
   ~TerminalUi() override;
+  void activateFromAnotherLaunch();
 
 private:
   struct DiscoveredHost {

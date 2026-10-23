@@ -21,6 +21,7 @@ class MainWindow final : public QMainWindow {
 
 public:
   MainWindow();
+  void activateFromAnotherLaunch();
 
 private slots:
   void showSettings();

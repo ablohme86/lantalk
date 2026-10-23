@@ -53,6 +53,7 @@ private:
   void replaceTranslationStatus(const QString &originalMessage,
                                 const QString &replacement);
   void clearOutgoingTranslationStatus();
+  void saveAttachmentAs(const QString &path, const QString &suggestedName);
   void appendFile(const QString &sender, const QString &name,
                   const QString &path, const QString &mimeType);
 
@@ -67,6 +68,8 @@ private:
   OllamaClient incomingTranslator_;
   bool liveTranslate_ = false;
   bool outgoingPending_ = false;
+  bool fileSendUiActive_ = false;
+  QString fileSendPreviousInput_;
   QString pendingOriginal_;
   QList<PendingIncomingTranslation> pendingIncomingTranslations_;
   QString myLanguage_;

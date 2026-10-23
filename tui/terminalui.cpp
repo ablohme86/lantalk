@@ -93,6 +93,11 @@ TerminalUi::~TerminalUi()
     restoreTerminal();
 }
 
+void TerminalUi::activateFromAnotherLaunch()
+{
+    setStatus(QStringLiteral("LANChat is already running in another terminal."));
+}
+
 void TerminalUi::configureNickname()
 {
     QSettings settings;
