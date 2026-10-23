@@ -15,6 +15,8 @@ add_library(lantalk_lib STATIC
     appconfig.h
     ollamaclient.cpp
     ollamaclient.h
+    messagetranslator.cpp
+    messagetranslator.h
     translationrestorer.cpp
     translationrestorer.h
     protocol/chathistory.cpp
@@ -26,6 +28,8 @@ add_library(lantalk_lib STATIC
     protocol/conversationidentity.cpp
     protocol/conversationidentity.h
     protocol/peerdiscovery.h
+    protocol/quotedmessage.cpp
+    protocol/quotedmessage.h
     tui/terminalui.cpp
     tui/terminalui.h
     gui/appicon.cpp

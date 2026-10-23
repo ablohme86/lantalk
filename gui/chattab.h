@@ -5,11 +5,13 @@
 #include <QTextCursor>
 #include <QWidget>
 
-#include "ollamaclient.h"
+#include "messagetranslator.h"
 
 class ChatSession;
 class QLabel;
 class ChatInput;
+class QCheckBox;
+class QVBoxLayout;
 class QPushButton;
 class QStackedWidget;
 class QTextBrowser;
@@ -80,6 +82,14 @@ private:
   void appendSystemMessage(const QString &message);
   void retryConnection();
   void updateTypingIndicator();
+  void updateLocalTyping();
+  void addQuote(const QString &text);
+  void removeQuote(QWidget *card);
+  void clearQuotes();
+  void updateQuoteTranslation();
+  // Renders a message, showing its quotes as blocks.
+  void insertMessageBody(QTextCursor &cursor, const QString &message,
+                         const QTextCharFormat &format);
 
   ChatSession *session_;
   QLabel *status_;
@@ -98,8 +108,17 @@ private:
   bool connected_ = false;
   bool hasPeerIdentity_ = false;
   bool historyLoaded_ = false;
-  OllamaClient outgoingTranslator_;
-  OllamaClient incomingTranslator_;
+  struct PendingQuote {
+    QWidget *card;
+    QCheckBox *translate;
+    QString text;
+  };
+
+  QWidget *quoteCards_;
+  QVBoxLayout *quoteCardsLayout_;
+  QList<PendingQuote> pendingQuotes_;
+  MessageTranslator outgoingTranslator_;
+  MessageTranslator incomingTranslator_;
   TranslationRestorer *translationRestorer_;
   bool liveTranslate_ = false;
   bool automaticTranslationRequest_ = false;

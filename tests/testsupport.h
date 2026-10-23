@@ -5,6 +5,8 @@
 
 #include <QCoreApplication>
 #include <QHostAddress>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QList>
 #include <QPointer>
 #include <QSettings>
@@ -110,7 +112,8 @@ private:
   QStringList lines_;
 };
 
-// Minimal Ollama stand-in answering GET /api/tags with the given models.
+// Minimal Ollama stand-in: GET /api/tags lists the given models, and POST
+// /api/generate "translates" the prompt's message by wrapping it in <<...>>.
 class FakeOllama {
 public:
   explicit FakeOllama(QStringList models) : models_(std::move(models)) {
@@ -130,28 +133,52 @@ public:
   QString url() const {
     return QStringLiteral("http://127.0.0.1:%1").arg(port());
   }
+  // The messages sent to /api/generate, in order.
+  QStringList translatedTexts() const { return translatedTexts_; }
 
 private:
   void respond(QTcpSocket *socket) {
     auto &request = pending_[socket];
     request.append(socket->readAll());
-    if (!request.contains("\r\n\r\n")) return;
-    QStringList entries;
-    for (const auto &model : std::as_const(models_)) {
-      entries.append(QStringLiteral("{\"name\":\"%1\",\"model\":\"%1\"}")
-                         .arg(model));
+    const int headerEnd = request.indexOf("\r\n\r\n");
+    if (headerEnd < 0) return;
+    const auto headers = request.left(headerEnd).toLower();
+    const int lengthAt = headers.indexOf("content-length:");
+    const int length =
+        lengthAt < 0 ? 0
+                     : headers.mid(lengthAt + 15, headers.indexOf('\r', lengthAt) - lengthAt - 15)
+                           .trimmed()
+                           .toInt();
+    if (request.size() < headerEnd + 4 + length) return;
+    const auto body = request.mid(headerEnd + 4, length);
+
+    QByteArray reply;
+    if (request.startsWith("POST /api/generate")) {
+      const auto prompt =
+          QJsonDocument::fromJson(body).object().value(QStringLiteral("prompt")).toString();
+      const auto marker = QStringLiteral("Translate this message:\n\n");
+      const auto text = prompt.mid(prompt.lastIndexOf(marker) + marker.size());
+      translatedTexts_.append(text);
+      reply = QJsonDocument(QJsonObject{{QStringLiteral("response"),
+                                         QStringLiteral("<<%1>>").arg(text)}})
+                  .toJson(QJsonDocument::Compact);
+    } else {
+      QStringList entries;
+      for (const auto &model : std::as_const(models_)) {
+        entries.append(QStringLiteral("{\"name\":\"%1\",\"model\":\"%1\"}")
+                           .arg(model));
+      }
+      reply = QStringLiteral("{\"models\":[%1]}").arg(entries.join(u',')).toUtf8();
     }
-    const auto body = QStringLiteral("{\"models\":[%1]}")
-                          .arg(entries.join(u','))
-                          .toUtf8();
     socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
                   "Connection: close\r\nContent-Length: " +
-                  QByteArray::number(body.size()) + "\r\n\r\n" + body);
+                  QByteArray::number(reply.size()) + "\r\n\r\n" + reply);
     socket->disconnectFromHost();
     pending_.remove(socket);
   }
 
   QStringList models_;
+  QStringList translatedTexts_;
   QTcpServer server_;
   QHash<QTcpSocket *, QByteArray> pending_;
 };

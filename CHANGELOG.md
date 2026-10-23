@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Added
+
+- Quotes: pasting several lines or a long text adds it as a quote, shown as a
+  card above the GUI input or before the TUI input. Quotes are sent as
+  `[quote]` blocks after the typed text, shown as shaded (GUI) or `│`-marked
+  (TUI) blocks, and skipped by Live Translate unless "Translate this" is
+  ticked (TUI: `/quote-translate`; `/unquote` removes a quote). `Ctrl+Shift+V`
+  pastes plain text in the GUI.
+- The TUI uses bracketed paste, so a multi-line paste no longer sends each
+  line as a separate message.
+
 ## v1.2.0 - 2026-10-23
 
 ### Added

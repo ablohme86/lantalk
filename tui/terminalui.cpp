@@ -5,10 +5,13 @@
 #include "protocol/peerdiscovery.h"
 #include "protocol/chatsession.h"
 #include "protocol/connectionregistry.h"
+#include "protocol/quotedmessage.h"
+#include "messagetranslator.h"
 #include "translationrestorer.h"
 
 #include <QCoreApplication>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QSocketNotifier>
 #include <QTextStream>
@@ -103,6 +106,24 @@ QString styledLabel(const QString &label)
            + QStringLiteral("\x1b[24m") + label.mid(marker + 2);
 }
 
+const auto PasteStart = QStringLiteral("\x1b[200~");
+const auto PasteEnd = QStringLiteral("\x1b[201~");
+
+// Transcript lines for a message: continuation lines are indented and
+// quotes are shown as a bar-marked block.
+QStringList transcriptLines(const QString &message)
+{
+    QStringList lines;
+    for (const auto &segment : QuotedMessage::parse(message)) {
+        for (const auto &part : segment.text.split(u'\n')) {
+            if (segment.quote) lines << QStringLiteral("    │ ") + part;
+            else lines << (lines.isEmpty() ? part : QStringLiteral("    ") + part);
+        }
+    }
+    if (lines.isEmpty()) lines << QString();
+    return lines;
+}
+
 const auto ReconnectHint = QStringLiteral("Re-connect to this host to start chatting");
 
 const auto MenuBarStyle = QStringLiteral("\x1b[0;97;44m");
@@ -188,7 +209,9 @@ void TerminalUi::configureTerminal()
         return;
     }
     rawMode_ = true;
-    terminalOutput << "\x1b[?1049h\x1b[?25l" << Qt::flush;
+    // Bracketed paste lets a multi-line paste arrive as one quote instead of
+    // one message per line.
+    terminalOutput << "\x1b[?1049h\x1b[?25l\x1b[?2004h" << Qt::flush;
 #endif
 }
 
@@ -200,7 +223,7 @@ void TerminalUi::restoreTerminal()
         rawMode_ = false;
     }
     if (ansi_) {
-        terminalOutput << "\x1b[?25h\x1b[?1049l" << Qt::flush;
+        terminalOutput << "\x1b[?2004l\x1b[?25h\x1b[?1049l" << Qt::flush;
     }
 #endif
 }
@@ -359,6 +382,16 @@ void TerminalUi::handleInput()
             break;
         }
         escapeTimer_.stop();
+        if (inputBytes_.startsWith(PasteStart)) {
+            const int end = inputBytes_.indexOf(PasteEnd);
+            if (end < 0) break; // the rest of the paste is still coming
+            handlePaste(QString::fromUtf8(inputBytes_.mid(PasteStart.size(), end - PasteStart.size()).toLatin1()));
+            inputBytes_.remove(0, end + PasteEnd.size());
+            continue;
+        }
+        if (inputBytes_.size() < PasteStart.size() && PasteStart.startsWith(inputBytes_)) {
+            break; // may be the start of a paste
+        }
         if (inputBytes_.startsWith(QStringLiteral("\x1b["))) {
             if (inputBytes_.size() < 3) {
                 break;
@@ -525,23 +558,31 @@ void TerminalUi::handleKey(const QByteArray &key)
             else openTopMenu(selectedMenu_ == 0 ? Menu::Chat : Menu::Settings);
         } else {
             const QString text = input_.trimmed();
-            if (!text.isEmpty() && !text.startsWith(u'/') && currentConversationDisconnected()) {
-                // Keep the draft; commands such as /connect still work.
-                status_ = ReconnectHint;
-            } else if (text.startsWith(u'/')) {
+            const bool hasMessage = !text.isEmpty() || !pendingQuotes_.isEmpty();
+            if (text.startsWith(u'/')) {
                 input_.clear();
                 handleCommand(text);
-            } else if (!text.isEmpty() && currentConversation_ >= 0
+            } else if (hasMessage && currentConversationDisconnected()) {
+                // Keep the draft; commands such as /connect still work.
+                status_ = ReconnectHint;
+            } else if (hasMessage && currentConversation_ >= 0
                        && currentConversation_ < conversations_.size()) {
+                const auto message = composeDraft(text);
                 input_.clear();
-                sendChatMessage(text);
+                pendingQuotes_.clear();
+                sendChatMessage(message);
             } else if (!text.isEmpty()) {
                 input_.clear();
                 status_ = QStringLiteral("Select a host and press Enter to connect.");
             }
         }
     } else if (key == "\x7f" || key == "\b") {
-        if (focus_ == Focus::Chat && !input_.isEmpty()) input_.chop(1);
+        if (focus_ == Focus::Chat && !input_.isEmpty()) {
+            input_.chop(1);
+        } else if (focus_ == Focus::Chat && !pendingQuotes_.isEmpty()) {
+            pendingQuotes_.removeLast();
+            status_ = QStringLiteral("Quote removed.");
+        }
     } else if (key == "\x17") {
         if (currentConversation_ >= 0 &&
             currentConversation_ < conversations_.size()) {
@@ -566,7 +607,9 @@ void TerminalUi::handleCommand(const QString &command)
     if (name == QStringLiteral("/help")) {
         print(QStringLiteral("/hosts, /connect <host|number> [port], /tabs, /use <tab>, /close [tab], "
                              "/nick <name>, /translate <my language> | <peer language>, "
-                             "/stoptranslate, /quit. In the full-screen UI use Tab and arrows; Ctrl-W closes the active chat."));
+                             "/stoptranslate, /quote-translate [n|all], /unquote [n|all], /quit. "
+                             "In the full-screen UI use Tab and arrows; Ctrl-W closes the active chat. "
+                             "Multi-line pastes become quotes, sent with the next message and not translated."));
     } else if (name == QStringLiteral("/hosts")) {
         focus_ = Focus::Hosts;
         printHosts();
@@ -652,6 +695,34 @@ void TerminalUi::handleCommand(const QString &command)
         conversation.peerLanguage = peerLanguage;
         conversation.translation->request(myLanguage, peerLanguage);
         setStatus(QStringLiteral("Requesting Live Translate…"));
+    } else if (name == QStringLiteral("/quote-translate") || name == QStringLiteral("/unquote")) {
+        if (pendingQuotes_.isEmpty()) {
+            setStatus(QStringLiteral("There are no pending quotes; paste text to add one."));
+            return;
+        }
+        QList<int> targets;
+        const auto which = parts.value(1, QStringLiteral("all"));
+        if (which.compare(QStringLiteral("all"), Qt::CaseInsensitive) == 0) {
+            for (int quote = 0; quote < pendingQuotes_.size(); ++quote) targets << quote;
+        } else {
+            bool valid = false;
+            const int number = which.toInt(&valid);
+            if (!valid || number < 1 || number > pendingQuotes_.size()) {
+                setStatus(QStringLiteral("Usage: %1 [1-%2|all]").arg(name).arg(pendingQuotes_.size()));
+                return;
+            }
+            targets << number - 1;
+        }
+        if (name == QStringLiteral("/unquote")) {
+            for (auto quote = targets.crbegin(); quote != targets.crend(); ++quote) pendingQuotes_.removeAt(*quote);
+            syncLocalTyping();
+            setStatus(QStringLiteral("Removed %1 quote(s).").arg(targets.size()));
+            return;
+        }
+        for (const int quote : targets) pendingQuotes_[quote].translate = !pendingQuotes_.at(quote).translate;
+        const bool translate = pendingQuotes_.at(targets.first()).translate;
+        setStatus(translate ? QStringLiteral("Live Translate will translate the quote(s) too.")
+                            : QStringLiteral("The quote(s) will be sent as they are."));
     } else if (name == QStringLiteral("/stoptranslate")) {
         if (currentConversation_ < 0 || currentConversation_ >= conversations_.size()) {
             setStatus(QStringLiteral("There is no active conversation."));
@@ -919,10 +990,10 @@ void TerminalUi::addSession(ChatSession *session, const QString &title)
                 const auto myLanguage = conversation.myLanguage;
                 const auto peerLanguage = conversation.peerLanguage;
                 const QPointer<ChatSession> safeSession(session);
-                auto *translator = new OllamaClient(this);
+                auto *translator = new MessageTranslator(this);
                 ++pendingIncomingTranslations_;
                 setStatus(QStringLiteral("Translating incoming message... Stand by."));
-                connect(translator, &OllamaClient::translated, this,
+                connect(translator, &MessageTranslator::translated, this,
                         [this, safeSession, translator, timestamp](const QString &translation,
                                                                    const QString &) {
                             if (safeSession) {
@@ -940,7 +1011,7 @@ void TerminalUi::addSession(ChatSession *session, const QString &title)
                                                         : QStringLiteral("Incoming translation finished; conversation closed."));
                             translator->deleteLater();
                         });
-                connect(translator, &OllamaClient::failed, this,
+                connect(translator, &MessageTranslator::failed, this,
                         [this, safeSession, translator, message, timestamp](const QString &error,
                                                                             const QString &) {
                             if (safeSession) {
@@ -1049,17 +1120,53 @@ void TerminalUi::syncLocalTyping()
     // typing; slash commands do not.
     ChatSession *session = nullptr;
     const auto draft = input_.trimmed();
+    const bool composing = (!draft.isEmpty() && !draft.startsWith(u'/')) || !pendingQuotes_.isEmpty();
     if (currentConversation_ >= 0 && currentConversation_ < conversations_.size()
-        && !conversations_.at(currentConversation_).disconnected && !draft.isEmpty()
-        && !draft.startsWith(u'/')) {
+        && !conversations_.at(currentConversation_).disconnected && composing) {
         session = conversations_.at(currentConversation_).session;
     }
+    const auto state = input_ + u'\0' + QString::number(pendingQuotes_.size());
     if (typingSession_ && typingSession_ != session) typingSession_->stopLocalTyping();
-    if (session && (typingSession_ != session || typingDraft_ != input_)) {
+    if (session && (typingSession_ != session || typingDraft_ != state)) {
         session->noteLocalTyping(true);
     }
     typingSession_ = session;
-    typingDraft_ = session ? input_ : QString();
+    typingDraft_ = session ? state : QString();
+}
+
+void TerminalUi::handlePaste(QString text)
+{
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n")).replace(u'\r', u'\n');
+    if (dialog_ != Dialog::None) {
+        dialogInput_ += text.simplified();
+        redraw();
+        return;
+    }
+    focus_ = Focus::Chat;
+    openMenu_ = Menu::None;
+    if (!QuotedMessage::shouldQuote(text)) {
+        input_ += QString(text).replace(u'\n', u' ');
+    } else {
+        text.remove(QRegularExpression(QStringLiteral("^(\\s*\\n)+")));
+        text.remove(QRegularExpression(QStringLiteral("\\s+$")));
+        if (!text.isEmpty()) {
+            pendingQuotes_.append({text});
+            status_ = QStringLiteral("Quote %1 added (%2 lines). Enter sends it with your message; "
+                                     "/quote-translate %1 translates it, /unquote %1 removes it.")
+                          .arg(pendingQuotes_.size())
+                          .arg(text.count(u'\n') + 1);
+        }
+    }
+    syncLocalTyping();
+    redraw();
+}
+
+QString TerminalUi::composeDraft(const QString &text) const
+{
+    QList<QuotedMessage::Segment> segments;
+    if (!text.isEmpty()) segments.append({text});
+    for (const auto &quote : pendingQuotes_) segments.append({quote.text, true, quote.translate});
+    return QuotedMessage::compose(segments, true);
 }
 
 void TerminalUi::closeConversation(int index)
@@ -1090,22 +1197,24 @@ void TerminalUi::sendChatMessage(const QString &text)
     }
     auto &conversation = conversations_[currentConversation_];
     if (!conversation.liveTranslate) {
+        // Quote translate marks only matter to Live Translate.
+        const auto message = QuotedMessage::withoutTranslateFlags(text);
         const auto timestamp = QDateTime::currentDateTime();
-        conversation.session->sendMessage(text);
+        conversation.session->sendMessage(message);
         appendTranscript(currentConversation_,
                          ChatHistory::timestampPrefix(timestamp) +
-                             QStringLiteral("You: %1").arg(text));
+                             QStringLiteral("You: %1").arg(message));
         ChatHistory::append(conversation.session->peerAddress(),
                             conversation.session->peerName(),
-                            QStringLiteral("You"), text, timestamp);
+                            QStringLiteral("You"), message, timestamp);
         return;
     }
 
     const QPointer<ChatSession> session(conversation.session);
-    auto *translator = new OllamaClient(this);
+    auto *translator = new MessageTranslator(this);
     ++pendingOutgoingTranslations_;
     setStatus(QStringLiteral("Translating message..."));
-    connect(translator, &OllamaClient::translated, this,
+    connect(translator, &MessageTranslator::translated, this,
             [this, session, translator](const QString &translation,
                                         const QString &originalMessage) {
                 if (session) {
@@ -1127,7 +1236,7 @@ void TerminalUi::sendChatMessage(const QString &text)
                                                  : QStringLiteral("Translation finished; conversation closed."));
                 translator->deleteLater();
             });
-    connect(translator, &OllamaClient::failed, this,
+    connect(translator, &MessageTranslator::failed, this,
             [this, translator](const QString &error, const QString &) {
                 --pendingOutgoingTranslations_;
                 updateTranslationStatus(error);
@@ -1186,12 +1295,7 @@ void TerminalUi::appendTranscript(int index, const QString &line)
 {
     if (index >= 0 && index < conversations_.size()) {
         auto &lines = conversations_[index].transcript;
-        // Multi-line messages continue on indented lines.
-        const auto parts = line.split(u'\n');
-        for (int part = 0; part < parts.size(); ++part) {
-            lines.append({sanitize(part == 0 ? parts.at(part) : QStringLiteral("    ") + parts.at(part)),
-                          false, false});
-        }
+        for (const auto &part : transcriptLines(line)) lines.append({sanitize(part), false, false});
         if (lines.size() > 200) lines.remove(0, lines.size() - 200);
     }
     redraw();
@@ -1208,13 +1312,9 @@ void TerminalUi::loadConversationHistory(int index)
     const auto entries = ChatHistory::load(conversation.session->peerAddress(),
                                            conversation.session->peerName(), 20);
     for (const auto &entry : entries) {
-        const auto parts = entry.message.split(u'\n');
-        for (int part = 0; part < parts.size(); ++part) {
-            conversation.transcript.append(
-                {sanitize(part == 0 ? ChatHistory::timestampPrefix(entry.timestamp)
-                                          + QStringLiteral("%1: %2").arg(entry.sender, parts.at(part))
-                                    : QStringLiteral("    ") + parts.at(part)),
-                 true, false});
+        for (const auto &part : transcriptLines(ChatHistory::timestampPrefix(entry.timestamp)
+                                                + QStringLiteral("%1: %2").arg(entry.sender, entry.message))) {
+            conversation.transcript.append({sanitize(part), true, false});
         }
     }
     if (!entries.isEmpty()) {
@@ -1500,7 +1600,16 @@ void TerminalUi::redraw()
     terminalOutput << "\x1b[30;46m" << (peerTyping ? "\x1b[3m" : "")
                    << elide(QStringLiteral(" %1").arg(statusText), terminalColumns_)
                    << "\x1b[0m\x1b[K\n";
-    terminalOutput << "\x1b[1;32m> \x1b[0m" << elide(input_, terminalColumns_ - 2) << "\x1b[K";
+    QString quotes;
+    for (int quote = 0; quote < pendingQuotes_.size(); ++quote) {
+        quotes += QStringLiteral("[quote %1: %2 lines%3] ")
+                      .arg(quote + 1)
+                      .arg(pendingQuotes_.at(quote).text.count(u'\n') + 1)
+                      .arg(pendingQuotes_.at(quote).translate ? QStringLiteral(", translate") : QString());
+    }
+    terminalOutput << "\x1b[1;32m> \x1b[0m";
+    if (!quotes.isEmpty()) terminalOutput << "\x1b[30;47m" << elide(quotes, terminalColumns_ - 2) << "\x1b[0m";
+    terminalOutput << elide(input_, std::max(0, terminalColumns_ - 2 - displayWidth(quotes))) << "\x1b[K";
     if (openMenu_ != Menu::None) drawMenu(openMenuColumn);
     drawDialog();
     // The cursor would otherwise blink inside the open drop-down.

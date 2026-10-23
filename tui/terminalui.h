@@ -87,6 +87,8 @@ private:
   void conversationIdentified(ChatSession *session);
   void mergeConversation(ChatSession *duplicate, ChatSession *existing);
   void syncLocalTyping();
+  void handlePaste(QString text);
+  QString composeDraft(const QString &text) const;
   void closeConversation(int index);
   void sendChatMessage(const QString &text);
   void setStatus(const QString &message);
@@ -135,6 +137,12 @@ private:
   QString dialogPrompt_;
   QString dialogInput_;
   QString status_;
+  // Pasted blocks waiting to be sent with the next message.
+  struct PendingQuote {
+    QString text;
+    bool translate = false;
+  };
+  QList<PendingQuote> pendingQuotes_;
   QPointer<ChatSession> typingSession_;
   QString typingDraft_;
   int pendingOutgoingTranslations_ = 0;

@@ -5,9 +5,13 @@
 #include "gui/dialogs.h"
 #include "protocol/chathistory.h"
 #include "protocol/chatsession.h"
+#include "protocol/quotedmessage.h"
 #include "translationrestorer.h"
 
+#include <QCheckBox>
 #include <QColor>
+#include <QFontDatabase>
+#include <QFontMetrics>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
@@ -33,6 +37,7 @@
 #include <QTextBrowser>
 #include <QTextImageFormat>
 #include <QTimer>
+#include <QToolButton>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QVBoxLayout>
@@ -145,6 +150,12 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   layout->addWidget(status_);
   layout->addWidget(viewStack_);
   layout->addWidget(typingIndicator_);
+  quoteCards_ = new QWidget(this);
+  quoteCardsLayout_ = new QVBoxLayout(quoteCards_);
+  quoteCardsLayout_->setContentsMargins(0, 0, 0, 0);
+  quoteCardsLayout_->setSpacing(4);
+  quoteCards_->hide();
+  layout->addWidget(quoteCards_);
   layout->addLayout(controls);
   translationRestorer_ = new TranslationRestorer(session_, this);
   refreshTranslationAvailability();
@@ -159,9 +170,8 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(input_, &ChatInput::returnPressed, this, &ChatTab::send);
   // textEdited only fires for user edits, not for the status texts this tab
   // places in the input.
-  connect(input_, &ChatInput::textEdited, this, [this](const QString &text) {
-    session_->noteLocalTyping(!text.trimmed().isEmpty());
-  });
+  connect(input_, &ChatInput::textEdited, this, &ChatTab::updateLocalTyping);
+  connect(input_, &ChatInput::quotePasted, this, &ChatTab::addQuote);
   connect(session_, &ChatSession::peerTypingChanged, this,
           &ChatTab::updateTypingIndicator);
   connect(typingAnimation_, &QTimer::timeout, this, [this] {
@@ -174,6 +184,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     } else {
       liveTranslate_ = false;
       automaticTranslationRequest_ = false;
+      updateQuoteTranslation();
       translationRestorer_->disable();
       status_->setText(QStringLiteral("Live Translate is off."));
     }
@@ -284,6 +295,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(session_, &ChatSession::liveTranslationGranted, this, [this] {
     liveTranslate_ = true;
     automaticTranslationRequest_ = false;
+    updateQuoteTranslation();
     {
       const QSignalBlocker blocker(translateButton_);
       translateButton_->setChecked(true);
@@ -295,6 +307,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(session_, &ChatSession::liveTranslationDenied, this,
           [this](const QString &message) {
             liveTranslate_ = false;
+            updateQuoteTranslation();
             const QSignalBlocker blocker(translateButton_);
             translateButton_->setChecked(false);
             if (std::exchange(automaticTranslationRequest_, false)) {
@@ -328,6 +341,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     if (hasPeerIdentity_) emit titleChanged();
     liveTranslate_ = false;
     automaticTranslationRequest_ = false;
+    updateQuoteTranslation();
     {
       const QSignalBlocker blocker(translateButton_);
       translateButton_->setChecked(false);
@@ -348,9 +362,9 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     }
   });
   connect(reconnectTimer_, &QTimer::timeout, this, &ChatTab::retryConnection);
-  connect(&outgoingTranslator_, &OllamaClient::translated, this,
+  connect(&outgoingTranslator_, &MessageTranslator::translated, this,
           &ChatTab::outgoingTranslationFinished);
-  connect(&outgoingTranslator_, &OllamaClient::failed, this,
+  connect(&outgoingTranslator_, &MessageTranslator::failed, this,
           [this](const QString &error, const QString &) {
             status_->setText(error);
             clearOutgoingTranslationStatus();
@@ -358,9 +372,9 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
             pendingOriginal_.clear();
             input_->setFocus(Qt::OtherFocusReason);
           });
-  connect(&incomingTranslator_, &OllamaClient::translated, this,
+  connect(&incomingTranslator_, &MessageTranslator::translated, this,
           &ChatTab::incomingTranslationFinished);
-  connect(&incomingTranslator_, &OllamaClient::failed, this,
+  connect(&incomingTranslator_, &MessageTranslator::failed, this,
           [this](const QString &error, const QString &originalMessage) {
             status_->setText(error);
             replaceTranslationStatus(originalMessage, originalMessage, false);
@@ -419,6 +433,106 @@ void ChatTab::updateTypingIndicator() {
       QStringLiteral("%1 is typing a message%2").arg(peer, dots));
   typingIndicator_->show();
   if (!typingAnimation_->isActive()) typingAnimation_->start();
+}
+
+void ChatTab::updateLocalTyping() {
+  session_->noteLocalTyping(!input_->text().trimmed().isEmpty() ||
+                            !pendingQuotes_.isEmpty());
+}
+
+void ChatTab::addQuote(const QString &pastedText) {
+  auto text = pastedText;
+  text.remove(QRegularExpression(QStringLiteral("^(\\s*\\n)+")));
+  text.remove(QRegularExpression(QStringLiteral("\\s+$")));
+  if (text.isEmpty()) return;
+
+  auto *card = new QFrame(quoteCards_);
+  card->setFrameShape(QFrame::StyledPanel);
+  auto *row = new QHBoxLayout(card);
+  row->setContentsMargins(6, 2, 2, 2);
+  const auto lines = text.split(u'\n');
+  auto *summary = new QLabel(card);
+  summary->setTextFormat(Qt::PlainText);
+  summary->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+  const auto summaryText =
+      QStringLiteral("Quote · %1 line%2 · %3")
+          .arg(lines.size())
+          .arg(lines.size() == 1 ? QString() : QStringLiteral("s"))
+          .arg(lines.first().trimmed());
+  summary->setText(summary->fontMetrics().elidedText(summaryText,
+                                                     Qt::ElideRight, 600));
+  summary->setToolTip(lines.mid(0, 40).join(u'\n'));
+  auto *translate = new QCheckBox(QStringLiteral("Translate this"), card);
+  auto *remove = new QToolButton(card);
+  remove->setText(QStringLiteral("✕"));
+  remove->setAutoRaise(true);
+  remove->setToolTip(QStringLiteral("Remove this quote"));
+  row->addWidget(summary, 1);
+  row->addWidget(translate);
+  row->addWidget(remove);
+  quoteCardsLayout_->addWidget(card);
+  quoteCards_->show();
+  pendingQuotes_.append({card, translate, text});
+  connect(remove, &QToolButton::clicked, this,
+          [this, card] { removeQuote(card); });
+  updateQuoteTranslation();
+  updateLocalTyping();
+  input_->setFocus(Qt::OtherFocusReason);
+}
+
+void ChatTab::removeQuote(QWidget *card) {
+  for (int index = 0; index < pendingQuotes_.size(); ++index) {
+    if (pendingQuotes_.at(index).card != card) continue;
+    pendingQuotes_.removeAt(index);
+    card->deleteLater();
+    break;
+  }
+  quoteCards_->setVisible(!pendingQuotes_.isEmpty());
+  updateLocalTyping();
+}
+
+void ChatTab::clearQuotes() {
+  for (const auto &quote : std::as_const(pendingQuotes_)) {
+    quote.card->deleteLater();
+  }
+  pendingQuotes_.clear();
+  quoteCards_->hide();
+}
+
+void ChatTab::updateQuoteTranslation() {
+  // Quotes are sent as they are unless Live Translate translates them.
+  for (const auto &quote : std::as_const(pendingQuotes_)) {
+    quote.translate->setEnabled(liveTranslate_);
+    quote.translate->setToolTip(
+        liveTranslate_
+            ? QStringLiteral("Translate this quote too; otherwise it is "
+                             "sent as it is.")
+            : QStringLiteral("Turn on Live Translate to translate quotes."));
+  }
+}
+
+void ChatTab::insertMessageBody(QTextCursor &cursor, const QString &message,
+                                const QTextCharFormat &format) {
+  QTextBlockFormat quoteBlock;
+  quoteBlock.setLeftMargin(12);
+  quoteBlock.setTopMargin(2);
+  quoteBlock.setBottomMargin(2);
+  quoteBlock.setBackground(QColor(127, 127, 127, 40));
+  auto quoteFormat = format;
+  quoteFormat.setFontFamilies(
+      {QFontDatabase::systemFont(QFontDatabase::FixedFont).family()});
+  bool first = true;
+  for (const auto &segment : QuotedMessage::parse(message)) {
+    if (segment.quote) {
+      cursor.insertBlock(quoteBlock, quoteFormat);
+      // Line breaks become blocks that keep the quote's block format.
+      cursor.insertText(segment.text, quoteFormat);
+    } else {
+      if (!first) cursor.insertBlock(QTextBlockFormat(), format);
+      cursor.insertText(segment.text, format);
+    }
+    first = false;
+  }
 }
 
 void ChatTab::retryConnection() {
@@ -482,17 +596,30 @@ void ChatTab::send() {
   auto text = input_->text();
   text.remove(QRegularExpression(QStringLiteral("^(\\s*\\n)+")));
   text.remove(QRegularExpression(QStringLiteral("\\s+$")));
-  if (text.trimmed().isEmpty() || outgoingPending_) {
+  if ((text.trimmed().isEmpty() && pendingQuotes_.isEmpty()) ||
+      outgoingPending_) {
     return;
   }
+  // The typed text first, then the quotes; quotes ticked "Translate this"
+  // keep their mark until the translator has seen it.
+  QList<QuotedMessage::Segment> segments;
+  if (!text.trimmed().isEmpty()) segments.append({text});
+  for (const auto &quote : std::as_const(pendingQuotes_)) {
+    segments.append({quote.text, true,
+                     quote.translate->isEnabled() &&
+                         quote.translate->isChecked()});
+  }
+  const auto draft = QuotedMessage::compose(segments, true);
   input_->clear();
+  clearQuotes();
   session_->stopLocalTyping();
   if (!liveTranslate_) {
-    sendText(text);
+    sendText(QuotedMessage::withoutTranslateFlags(draft));
     return;
   }
+  text = draft;
   outgoingPending_ = true;
-  pendingOriginal_ = text;
+  pendingOriginal_ = QuotedMessage::withoutTranslateFlags(draft);
   input_->setText(QStringLiteral("Translating message..."));
   input_->setReadOnly(true);
   auto inputFont = input_->font();
@@ -608,9 +735,9 @@ QTextCursor ChatTab::appendMessage(const QString &sender,
         QStringLiteral("%1: %2").arg(hoverLabel, hoverText));
   }
   const int messageStart = cursor.position();
-  cursor.insertText(message, messageFormat);
+  insertMessageBody(cursor, message, messageFormat);
   const int messageEnd = cursor.position();
-  cursor.insertBlock();
+  cursor.insertBlock(QTextBlockFormat());
   log_->setTextCursor(cursor);
 
   QTextCursor messageCursor(log_->document());
@@ -652,10 +779,13 @@ void ChatTab::setIncomingMessageText(IncomingMessage &incoming,
     format.setToolTip(QStringLiteral("Original: %1")
                           .arg(incoming.originalMessage));
   }
-  incoming.messageCursor.insertText(text, format);
-  const int end = incoming.messageCursor.position();
-  incoming.messageCursor.setPosition(end - text.size());
-  incoming.messageCursor.setPosition(end, QTextCursor::KeepAnchor);
+  auto &cursor = incoming.messageCursor;
+  const int start = cursor.selectionStart();
+  cursor.removeSelectedText();
+  insertMessageBody(cursor, text, format);
+  const int end = cursor.position();
+  cursor.setPosition(start);
+  cursor.setPosition(end, QTextCursor::KeepAnchor);
   incoming.translated = translated;
   incoming.pending = pending;
 }

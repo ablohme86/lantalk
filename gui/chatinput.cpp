@@ -2,6 +2,9 @@
 
 #include <QAbstractTextDocumentLayout>
 #include <QKeyEvent>
+#include <QMimeData>
+
+#include "protocol/quotedmessage.h"
 
 #include <algorithm>
 
@@ -47,6 +50,13 @@ QSize ChatInput::minimumSizeHint() const {
 }
 
 void ChatInput::keyPressEvent(QKeyEvent *event) {
+  if (event->key() == Qt::Key_V &&
+      event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier)) {
+    pastePlainText_ = true;
+    paste();
+    pastePlainText_ = false;
+    return;
+  }
   const bool isReturn =
       event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter;
   if (isReturn && !(event->modifiers() & Qt::ShiftModifier)) {
@@ -60,6 +70,21 @@ void ChatInput::keyPressEvent(QKeyEvent *event) {
     return;
   }
   QPlainTextEdit::keyPressEvent(event);
+}
+
+bool ChatInput::canInsertFromMimeData(const QMimeData *source) const {
+  return source->hasText();
+}
+
+void ChatInput::insertFromMimeData(const QMimeData *source) {
+  // Windows clipboards use CRLF line endings.
+  auto text = source->text();
+  text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+  if (!pastePlainText_ && !isReadOnly() && QuotedMessage::shouldQuote(text)) {
+    emit quotePasted(text);
+    return;
+  }
+  insertPlainText(text);
 }
 
 int ChatInput::heightForLines(int lines) const {

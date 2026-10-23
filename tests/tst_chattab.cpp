@@ -5,6 +5,9 @@
 #include "translationrestorer.h"
 
 #include <QApplication>
+#include <QCheckBox>
+#include <QClipboard>
+#include <QTextBrowser>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -129,6 +132,58 @@ private slots:
     const auto message = received.first().first().toString();
     QVERIFY(message.startsWith(QStringLiteral("    line 0\n")));
     QVERIFY(message.endsWith(QStringLiteral("    line 19  \n\n\nmore")));
+  }
+
+  void largePastesBecomeQuotesSentAsBlocks() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    ChatTab tab(session);
+    session->setParent(&tab);
+    tab.resize(500, 400);
+    tab.show();
+    QTRY_VERIFY(session->isHandshakeComplete());
+    QTRY_COMPARE(bob.liveSessions().size(), 1);
+    QSignalSpy received(bob.liveSessions().first(),
+                        &ChatSession::messageReceived);
+    auto *input = tab.findChild<ChatInput *>();
+    QVERIFY(input);
+
+    const auto code = QStringLiteral("int x = 1;\r\n    return x;\r\n");
+    QGuiApplication::clipboard()->setText(code);
+    QTest::keyClick(input, Qt::Key_V, Qt::ControlModifier);
+    QVERIFY(input->text().isEmpty());
+    QCheckBox *translate = nullptr;
+    QTRY_VERIFY((translate = tab.findChild<QCheckBox *>()) != nullptr);
+    QVERIFY(!translate->isChecked());
+    QVERIFY(!translate->isEnabled()); // Live Translate is off
+
+    QTest::keyClicks(input, QStringLiteral("Look:"));
+    QTest::keyClick(input, Qt::Key_Return);
+    QTRY_COMPARE(received.size(), 1);
+    QCOMPARE(received.first().first().toString(),
+             QStringLiteral("Look:\n[quote]\nint x = 1;\n    return x;\n[/quote]"));
+    QTRY_VERIFY(tab.findChild<QCheckBox *>() == nullptr);
+
+    const auto log = tab.findChild<QTextBrowser *>()->toPlainText();
+    QVERIFY(log.contains(QStringLiteral("    return x;")));
+    QVERIFY(!log.contains(QStringLiteral("[quote]")));
+  }
+
+  void ctrlShiftVPastesPlainText() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    ChatTab tab(session);
+    session->setParent(&tab);
+    tab.show();
+    auto *input = tab.findChild<ChatInput *>();
+    QVERIFY(input);
+
+    QGuiApplication::clipboard()->setText(QStringLiteral("a\nb"));
+    QTest::keyClick(input, Qt::Key_V, Qt::ControlModifier | Qt::ShiftModifier);
+    QCOMPARE(input->text(), QStringLiteral("a\nb"));
+    QVERIFY(tab.findChild<QCheckBox *>() == nullptr);
   }
 
   void savedTranslationResumesAndChecksButton() {
