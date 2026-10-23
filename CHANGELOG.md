@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.5.0 - 2026-10-23
+
 ### Added
 
 - Desktop notifications for messages and files that arrive while the GUI
