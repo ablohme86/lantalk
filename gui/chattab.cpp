@@ -19,6 +19,7 @@
 #include <QSignalBlocker>
 #include <QTextBlock>
 #include <QTextBrowser>
+#include <QTextImageFormat>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -370,5 +371,15 @@ void ChatTab::appendFile(const QString &sender, const QString &name,
   }
   cursor.insertText(name, nameFormat);
   cursor.insertBlock();
+  if (mimeType.startsWith(QStringLiteral("image/"))) {
+    QTextImageFormat thumbnail;
+    thumbnail.setName(QUrl::fromLocalFile(path).toString());
+    thumbnail.setWidth(360);
+    thumbnail.setAnchor(true);
+    thumbnail.setAnchorHref(QUrl::fromLocalFile(path).toString());
+    thumbnail.setToolTip(QStringLiteral("Click to view image in chat"));
+    cursor.insertImage(thumbnail);
+    cursor.insertBlock();
+  }
   log_->setTextCursor(cursor);
 }
