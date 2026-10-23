@@ -12,6 +12,7 @@
 #include <QUuid>
 
 class QComboBox;
+class ChatSession;
 class ChatTab;
 class QEvent;
 class QSystemTrayIcon;
@@ -38,7 +39,8 @@ private slots:
 private:
   void applyDarkMenuStyle();
   void promptForNickname();
-  void connectToAddress(const QString &address, quint16 port);
+  void connectToAddress(const QString &address, quint16 port,
+                        const QString &nickname = {});
   void startListening();
   void startDiscovery();
   void setupTrayIcon();
@@ -52,8 +54,10 @@ private:
   void scanPrivateSubnets();
   void sendDiscoveryProbeBatch();
   void refreshHostList();
-  void addSession(QTcpSocket *socket, const QString &initialTitle,
-                  const QString &reconnectAddress, quint16 reconnectPort);
+  ChatTab *createTab(ChatSession *session, const QString &reconnectAddress,
+                     quint16 reconnectPort);
+  void showTab(ChatTab *tab, const QString &title);
+  ChatTab *tabForSession(ChatSession *session) const;
   void restoreOpenConnections();
   void persistOpenConnections();
   quint16 discoveredPortForAddress(const QHostAddress &address) const;

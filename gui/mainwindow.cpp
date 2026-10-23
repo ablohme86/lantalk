@@ -5,6 +5,7 @@
 #include "gui/chattab.h"
 #include "gui/dialogs.h"
 #include "protocol/chatsession.h"
+#include "protocol/connectionregistry.h"
 #include "protocol/peerdiscovery.h"
 
 #include <QAction>
@@ -70,6 +71,9 @@ MainWindow::MainWindow() {
           });
   connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
     auto *tab = tabs_->widget(index);
+    if (auto *chatTab = qobject_cast<ChatTab *>(tab)) {
+      chatTab->closeConversation();
+    }
     tabs_->removeTab(index);
     tab->deleteLater();
     persistOpenConnections();
@@ -210,7 +214,8 @@ void MainWindow::connectToHost() {
   const auto peerPort = endpoint.isEmpty()
                             ? DefaultPort
                             : endpoint.value(QStringLiteral("port")).toUInt();
-  connectToAddress(address, peerPort);
+  connectToAddress(address, peerPort,
+                   endpoint.value(QStringLiteral("nickname")).toString());
 }
 
 void MainWindow::showConnectDialog() {
@@ -227,9 +232,20 @@ void MainWindow::showConnectDialog() {
 void MainWindow::acceptConnection() {
   while (server_.hasPendingConnections()) {
     auto *socket = server_.nextPendingConnection();
-    const auto address = socket->peerAddress();
-    addSession(socket, QStringLiteral("Incoming connection"),
-               address.toString(), discoveredPortForAddress(address));
+    const auto port = discoveredPortForAddress(socket->peerAddress());
+    auto *session = new ChatSession(socket, this);
+    const auto address = session->peerAddress();
+    session->setRemoteEndpoint(address, port);
+    // The tab stays hidden until the handshake shows that this is a new
+    // conversation; a duplicate of an open one is merged into its tab.
+    auto *tab = createTab(session, address, port);
+    tab->hide();
+    connect(session, &ChatSession::peerIdentified, this, [this, tab] {
+      if (tabs_->indexOf(tab) < 0) showTab(tab, tab->title());
+    });
+    connect(session, &ChatSession::disconnected, tab, [this, tab] {
+      if (tabs_->indexOf(tab) < 0) tab->deleteLater();
+    });
   }
 }
 
@@ -263,11 +279,29 @@ void MainWindow::promptForNickname() {
   }
 }
 
-void MainWindow::connectToAddress(const QString &address, quint16 port) {
-  auto *socket = new QTcpSocket(this);
-  addSession(socket, QStringLiteral("Connecting to %1…").arg(address),
-             address, port);
-  socket->connectToHost(address, port);
+void MainWindow::connectToAddress(const QString &address, quint16 port,
+                                  const QString &nickname) {
+  if (auto *existing =
+          ConnectionRegistry::shared()->findSession(address, port, nickname)) {
+    if (auto *tab = tabForSession(existing)) {
+      tabs_->setCurrentWidget(tab);
+      tab->reconnectNow();
+      statusBar()->showMessage(
+          QStringLiteral("Already connected to %1; switched to its tab.")
+              .arg(tab->title()),
+          5000);
+    } else {
+      statusBar()->showMessage(
+          QStringLiteral("A connection to %1 is already being established.")
+              .arg(address),
+          5000);
+    }
+    return;
+  }
+  auto *session = new ChatSession(new QTcpSocket(this), this);
+  auto *tab = createTab(session, address, port);
+  showTab(tab, QStringLiteral("Connecting to %1…").arg(address));
+  session->connectToHost(address, port);
 }
 
 void MainWindow::startListening() {
@@ -471,6 +505,7 @@ void MainWindow::refreshHostList() {
     QVariantMap endpoint;
     endpoint.insert(QStringLiteral("address"), host.address.toString());
     endpoint.insert(QStringLiteral("port"), host.port);
+    endpoint.insert(QStringLiteral("nickname"), host.nickname);
     host_->addItem(
         QStringLiteral("%1 (%2)").arg(host.nickname, host.address.toString()),
         endpoint);
@@ -483,15 +518,22 @@ void MainWindow::refreshHostList() {
   }
 }
 
-void MainWindow::addSession(QTcpSocket *socket, const QString &initialTitle,
-                            const QString &reconnectAddress,
-                            quint16 reconnectPort) {
-  auto *session = new ChatSession(socket, this);
-  auto *tab = new ChatTab(session, tabs_);
+ChatTab *MainWindow::createTab(ChatSession *session,
+                               const QString &reconnectAddress,
+                               quint16 reconnectPort) {
+  auto *tab = new ChatTab(session, this);
   session->setParent(tab);
   tab->setReconnectEndpoint(reconnectAddress, reconnectPort);
-  const auto index = tabs_->addTab(tab, initialTitle);
-  tabs_->setCurrentIndex(index);
+  connect(session, &ChatSession::mergedInto, this,
+          [this, tab](ChatSession *existing) {
+            const bool wasCurrent = tabs_->currentWidget() == tab;
+            const int index = tabs_->indexOf(tab);
+            if (index >= 0) tabs_->removeTab(index);
+            tab->deleteLater();
+            auto *existingTab = tabForSession(existing);
+            if (existingTab && wasCurrent) tabs_->setCurrentWidget(existingTab);
+            persistOpenConnections();
+          });
   connect(tab, &ChatTab::incomingMessageReceived, this,
           [this, tab] {
             if (tabs_->currentWidget() != tab) setTabUnread(tab, true);
@@ -508,7 +550,20 @@ void MainWindow::addSession(QTcpSocket *socket, const QString &initialTitle,
       QSettings()
           .value(QStringLiteral("profile/nickname"), QStringLiteral("Guest"))
           .toString());
+  return tab;
+}
+
+void MainWindow::showTab(ChatTab *tab, const QString &title) {
+  tabs_->setCurrentIndex(tabs_->addTab(tab, title));
   persistOpenConnections();
+}
+
+ChatTab *MainWindow::tabForSession(ChatSession *session) const {
+  for (int index = 0; index < tabs_->count(); ++index) {
+    auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index));
+    if (tab && tab->session() == session) return tab;
+  }
+  return nullptr;
 }
 
 void MainWindow::restoreOpenConnections() {

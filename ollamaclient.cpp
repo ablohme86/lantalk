@@ -2,13 +2,59 @@
 
 #include "appconfig.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QUrl>
 
+namespace {
+
+QString withoutLatestTag(const QString &model)
+{
+    return model.endsWith(QStringLiteral(":latest")) ? model.chopped(7) : model;
+}
+
+} // namespace
+
 OllamaClient::OllamaClient(QObject *parent) : QObject(parent) {}
+
+void OllamaClient::checkAvailability()
+{
+    QSettings settings;
+    const auto endpoint = settings.value(QStringLiteral("ollama/url"), DefaultOllamaUrl).toString().trimmed();
+    const auto model = settings.value(QStringLiteral("ollama/model"), DefaultOllamaModel).toString().trimmed();
+    if (endpoint.isEmpty() || model.isEmpty()) {
+        emit availabilityChecked(false, QStringLiteral("Ollama is not configured."));
+        return;
+    }
+
+    QNetworkRequest request(QUrl(endpoint + QStringLiteral("/api/tags")));
+    request.setTransferTimeout(5000);
+    auto *reply = manager_.get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, model] {
+        const auto error = reply->error();
+        const auto errorText = reply->errorString();
+        const auto body = reply->readAll();
+        reply->deleteLater();
+        if (error != QNetworkReply::NoError) {
+            emit availabilityChecked(false, QStringLiteral("Ollama is unreachable: %1").arg(errorText));
+            return;
+        }
+        const auto models = QJsonDocument::fromJson(body).object().value(QStringLiteral("models")).toArray();
+        const auto wanted = withoutLatestTag(model);
+        for (const auto &entry : models) {
+            const auto object = entry.toObject();
+            if (withoutLatestTag(object.value(QStringLiteral("name")).toString()) == wanted
+                || withoutLatestTag(object.value(QStringLiteral("model")).toString()) == wanted) {
+                emit availabilityChecked(true, {});
+                return;
+            }
+        }
+        emit availabilityChecked(false, QStringLiteral("Ollama model %1 is not installed.").arg(model));
+    });
+}
 
 void OllamaClient::translate(const QString &text, const QString &sourceLanguage, const QString &targetLanguage)
 {

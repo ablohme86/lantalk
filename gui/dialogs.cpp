@@ -36,6 +36,12 @@ QString TranslationDialog::peerLanguage() const {
   return peerLanguage_->currentText();
 }
 
+void TranslationDialog::setLanguages(const QString &myLanguage,
+                                     const QString &peerLanguage) {
+  myLanguage_->setCurrentText(myLanguage);
+  peerLanguage_->setCurrentText(peerLanguage);
+}
+
 SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
   setWindowTitle(QStringLiteral("Settings"));
   auto *layout = new QFormLayout(this);

@@ -11,6 +11,7 @@ public:
   explicit TranslationDialog(QWidget *parent = nullptr);
   QString myLanguage() const;
   QString peerLanguage() const;
+  void setLanguages(const QString &myLanguage, const QString &peerLanguage);
 
 private:
   QComboBox *myLanguage_;

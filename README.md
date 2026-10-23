@@ -15,6 +15,24 @@ Messages show local `[HH:mm]` timestamps. Tabs highlight when another
 conversation receives a message and clear the highlight when selected.
 The GUI starts with an 11 pt font; change it under Settings → Font Size.
 
+LANChat keeps at most one connection per peer (IP address + nickname).
+Connecting to a host you already have a conversation with, from either the GUI
+or the TUI, switches to its existing tab instead of opening a new connection;
+a disconnected tab is retried immediately. The rule is enforced for every
+connection, including incoming ones: when a peer reconnects, or both sides
+connect at the same moment, the connections are merged into the existing tab
+and its history and state are kept.
+
+Live Translate languages are remembered per conversation. After a reconnect
+or an application restart, Live Translate turns itself back on as soon as the
+configured Ollama server is reachable and has the configured model; while the
+server is unavailable, LANChat retries every 30 seconds. Turning Live
+Translate off is remembered as well.
+
+When the other participant is composing a message, `Name is typing...` appears
+above the message input (in the GUI) or in the chat pane's bottom border (in
+the TUI). A draft left untouched for 60 seconds stops counting as typing.
+
 The app automatically selects the ANSI terminal interface when launched from
 an interactive terminal. It uses the desktop GUI otherwise. Pass `--tui` to
 force terminal mode. The TUI listens for chats, discovers LANChat peers, and
@@ -63,10 +81,30 @@ until that conversation is closed. Use the `Save as...` link beside any
 attachment to copy it to a chosen location. File transfers show progress in the
 chat input, and launching LANChat again activates the running instance.
 
+## Protocol extensions
+
+LANCHAT PROTOCOL is line based. After receiving the peer's `NICKNAME`, current
+clients send `CAPABILITIES TYPING`; unknown capability tokens are ignored.
+Typing notifications are sent only to peers that advertised `TYPING`, so
+older clients never receive them (they report the `CAPABILITIES` line once as
+an unsupported command).
+
+- `TYPING START` is sent when the local draft becomes non-empty and repeated
+  every 15 seconds while the user keeps composing.
+- `TYPING STOP` is sent when the draft is cleared or sent, after 60 seconds
+  without edits, and when the conversation is closed.
+
+Receivers hide the indicator on `TYPING STOP`, on an incoming `MESSAGE`, on
+disconnect, or 35 seconds after the last `TYPING START`.
+
 ## Source layout
 
 - `protocol/chatsession.*` implements the TCP LANCHAT protocol, file
-  transfers, and Live Translate negotiation.
+  transfers, typing notifications, and Live Translate negotiation.
+- `protocol/connectionregistry.*` enforces one connection per peer, and
+  `protocol/conversationidentity.*` defines how peers are compared.
+- `translationrestorer.*` stores Live Translate languages per conversation and
+  resumes translation after reconnects.
 - `gui/dialogs.*`, `gui/chattab.*`, and `gui/mainwindow.*` contain the Qt UI,
   including LAN host discovery.
 - `tui/terminalui.*` provides the dependency-free ANSI terminal UI, sharing
@@ -84,6 +122,9 @@ cmake -S . -B build
 cmake --build build --config Release
 cmake --install build --config Release --prefix dist
 ```
+
+Run the unit tests with `ctest --test-dir build` (requires Qt's Test module;
+configure with `-DLANCHAT_BUILD_TESTS=OFF` to skip them).
 
 On Linux, run `dist/bin/lanchat`. On Windows, run `dist/bin/lanchat.exe`.
 The install step invokes Qt's deployment support, which places the Qt runtime

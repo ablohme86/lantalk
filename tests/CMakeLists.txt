@@ -1,0 +1,11 @@
+function(lanchat_add_test name)
+    add_executable(${name} ${name}.cpp testsupport.h)
+    target_link_libraries(${name} PRIVATE lanchat_lib Qt6::Test)
+    add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+endfunction()
+
+lanchat_add_test(tst_typing)
+lanchat_add_test(tst_connectionregistry)
+lanchat_add_test(tst_translationrestore)
+lanchat_add_test(tst_chattab)

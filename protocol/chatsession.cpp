@@ -1,6 +1,7 @@
 #include "protocol/chatsession.h"
 
 #include "appconfig.h"
+#include "protocol/connectionregistry.h"
 
 #include <QDir>
 #include <QFile>
@@ -10,6 +11,8 @@
 #include <QStandardPaths>
 #include <QTcpSocket>
 #include <QUuid>
+
+#include <utility>
 
 namespace {
 
@@ -38,13 +41,31 @@ QString formatPeerAddress(const QHostAddress &address) {
 
 } // namespace
 
-ChatSession::ChatSession(QTcpSocket *socket, QObject *parent)
-    : QObject(parent), socket_(socket) {
+ChatSession::ChatSession(QTcpSocket *socket, QObject *parent,
+                         ConnectionRegistry *registry)
+    : QObject(parent),
+      registry_(registry ? registry : ConnectionRegistry::shared()),
+      socket_(socket) {
   peerAddress_ = formatPeerAddress(socket_->peerAddress());
   outgoingFilePump_.setSingleShot(true);
   connect(&outgoingFilePump_, &QTimer::timeout, this,
           &ChatSession::sendNextFileChunk);
+  localTypingIdleTimer_.setSingleShot(true);
+  localTypingIdleTimer_.setInterval(TypingInactivityTimeoutMs);
+  connect(&localTypingIdleTimer_, &QTimer::timeout, this,
+          &ChatSession::stopLocalTyping);
+  localTypingRefreshTimer_.setInterval(TypingRefreshIntervalMs);
+  connect(&localTypingRefreshTimer_, &QTimer::timeout, this, [this] {
+    if (localTyping_ && handshakeComplete_ && isConnected()) {
+      sendLine(QStringLiteral("TYPING START"));
+    }
+  });
+  peerTypingExpiryTimer_.setSingleShot(true);
+  peerTypingExpiryTimer_.setInterval(TypingIndicatorTimeoutMs);
+  connect(&peerTypingExpiryTimer_, &QTimer::timeout, this,
+          [this] { setPeerTyping(false); });
   setupSocket();
+  registry_->add(this);
 }
 
 void ChatSession::setupSocket() {
@@ -75,6 +96,7 @@ void ChatSession::setupSocket() {
 }
 
 ChatSession::~ChatSession() {
+  registry_->remove(this);
   outgoingFilePump_.stop();
   if (outgoingFile_) {
     outgoingFile_->close();
@@ -92,34 +114,55 @@ void ChatSession::beginHandshake(const QString &nickname) {
   }
 }
 
+void ChatSession::connectToHost(const QString &address, quint16 port) {
+  closed_ = false;
+  outgoing_ = true;
+  remoteHost_ = address.trimmed();
+  remotePort_ = port;
+  const auto requestedAddress = formatPeerAddress(QHostAddress(remoteHost_));
+  if (!requestedAddress.isEmpty()) peerAddress_ = requestedAddress;
+  socket_->connectToHost(remoteHost_, port);
+}
+
 void ChatSession::reconnectToHost(const QString &address, quint16 port) {
   if (nickname_.isEmpty() || address.trimmed().isEmpty() || port == 0) {
     return;
   }
 
   cancelOutgoingFiles();
-  const auto requestedAddress = formatPeerAddress(QHostAddress(address));
-  if (!requestedAddress.isEmpty()) peerAddress_ = requestedAddress;
   auto *oldSocket = socket_;
   disconnect(oldSocket, nullptr, this, nullptr);
   oldSocket->abort();
   oldSocket->deleteLater();
+  resetConnectionState();
 
+  socket_ = new QTcpSocket(this);
+  setupSocket();
+  connectToHost(address, port);
+}
+
+void ChatSession::resetConnectionState() {
   buffer_.clear();
   peerName_.clear();
   handshakeComplete_ = false;
+  handshakeClock_.invalidate();
   translationActive_ = false;
   peerTranslationActive_ = false;
   translationRequestId_.clear();
   incomingFiles_.clear();
   disconnectNotified_ = false;
+  peerSupportsTyping_ = false;
+  resetTypingState();
+}
 
-  socket_ = new QTcpSocket(this);
-  setupSocket();
-  socket_->connectToHost(address, port);
+void ChatSession::setRemoteEndpoint(const QString &address, quint16 port) {
+  remoteHost_ = address.trimmed();
+  remotePort_ = port;
 }
 
 void ChatSession::closeConnection() {
+  stopLocalTyping();
+  closed_ = true;
   cancelOutgoingFiles();
   if (socket_->state() == QAbstractSocket::ConnectedState) {
     socket_->disconnectFromHost();
@@ -134,6 +177,11 @@ void ChatSession::notifyDisconnected() {
   }
   disconnectNotified_ = true;
   cancelOutgoingFiles();
+  translationActive_ = false;
+  peerTranslationActive_ = false;
+  translationRequestId_.clear();
+  resetTypingState();
+  peerSupportsTyping_ = false;
   emit disconnected();
 }
 
@@ -146,6 +194,7 @@ void ChatSession::sendMessage(const QString &message,
   const auto payload = message.toUtf8().toBase64(QByteArray::Base64UrlEncoding);
   if (originalMessage.isEmpty()) {
     sendLine(QStringLiteral("MESSAGE %1").arg(QString::fromLatin1(payload)));
+    if (localTyping_) sendLine(QStringLiteral("TYPING START"));
     return;
   }
   const auto originalPayload =
@@ -153,6 +202,9 @@ void ChatSession::sendMessage(const QString &message,
   sendLine(QStringLiteral("MESSAGE %1 ORG_LANG %2")
                .arg(QString::fromLatin1(payload),
                     QString::fromLatin1(originalPayload)));
+  // The peer hides its indicator when a message arrives; restore it if the
+  // user is already composing the next one.
+  if (localTyping_) sendLine(QStringLiteral("TYPING START"));
 }
 
 bool ChatSession::sendFile(const QString &filePath) {
@@ -347,16 +399,145 @@ void ChatSession::stopLiveTranslation() {
   translationRequestId_.clear();
 }
 
+bool ChatSession::liveTranslationActiveOrPending() const {
+  return translationActive_ || !translationRequestId_.isEmpty();
+}
+
+void ChatSession::noteLocalTyping(bool hasDraft) {
+  if (!hasDraft) {
+    stopLocalTyping();
+    return;
+  }
+  if (!handshakeComplete_ || !peerSupportsTyping_ || !isConnected()) {
+    return;
+  }
+  localTypingIdleTimer_.start();
+  if (localTyping_) return;
+  localTyping_ = true;
+  sendLine(QStringLiteral("TYPING START"));
+  localTypingRefreshTimer_.start();
+}
+
+void ChatSession::stopLocalTyping() {
+  localTypingIdleTimer_.stop();
+  localTypingRefreshTimer_.stop();
+  if (!localTyping_) return;
+  localTyping_ = false;
+  if (handshakeComplete_ && isConnected()) {
+    sendLine(QStringLiteral("TYPING STOP"));
+  }
+}
+
+bool ChatSession::peerTyping() const { return peerTyping_; }
+
+bool ChatSession::peerSupportsTyping() const { return peerSupportsTyping_; }
+
+void ChatSession::setTypingTimeouts(int inactivityMs, int refreshMs,
+                                    int expiryMs) {
+  localTypingIdleTimer_.setInterval(inactivityMs);
+  localTypingRefreshTimer_.setInterval(refreshMs);
+  peerTypingExpiryTimer_.setInterval(expiryMs);
+}
+
+void ChatSession::setPeerTyping(bool typing) {
+  if (!typing) peerTypingExpiryTimer_.stop();
+  if (peerTyping_ == typing) return;
+  peerTyping_ = typing;
+  emit peerTypingChanged(typing);
+}
+
+void ChatSession::resetTypingState() {
+  localTypingIdleTimer_.stop();
+  localTypingRefreshTimer_.stop();
+  localTyping_ = false;
+  setPeerTyping(false);
+}
+
 QString ChatSession::peerName() const { return peerName_; }
+QString ChatSession::identityName() const { return identityName_; }
 QString ChatSession::peerAddress() const {
   const auto currentAddress = formatPeerAddress(socket_->peerAddress());
   return currentAddress.isEmpty() ? peerAddress_ : currentAddress;
 }
 quint16 ChatSession::peerPort() const { return socket_->peerPort(); }
+QString ChatSession::remoteHost() const { return remoteHost_; }
+quint16 ChatSession::remotePort() const { return remotePort_; }
+
+bool ChatSession::isConnected() const {
+  return socket_->state() == QAbstractSocket::ConnectedState;
+}
+
+bool ChatSession::isHandshakeComplete() const { return handshakeComplete_; }
+
+bool ChatSession::isRetired() const { return closed_ || merged_; }
+
+qint64 ChatSession::handshakeAgeMs() const {
+  return handshakeClock_.isValid() ? handshakeClock_.elapsed() : -1;
+}
+
+// Both ends of a TCP connection derive the same key for it (initiator
+// endpoint first), so peers resolving a simultaneous-connect race agree on
+// which connection survives.
+QString ChatSession::connectionKey() const {
+  const auto local = QStringLiteral("%1:%2")
+                         .arg(formatPeerAddress(socket_->localAddress()))
+                         .arg(socket_->localPort());
+  const auto remote = QStringLiteral("%1:%2")
+                          .arg(formatPeerAddress(socket_->peerAddress()))
+                          .arg(socket_->peerPort());
+  return outgoing_ ? local + u'>' + remote : remote + u'>' + local;
+}
+
+void ChatSession::adoptConnection(ChatSession *duplicate) {
+  if (handshakeComplete_ && !disconnectNotified_) notifyDisconnected();
+  cancelOutgoingFiles();
+  auto *oldSocket = socket_;
+  disconnect(oldSocket, nullptr, this, nullptr);
+  oldSocket->abort();
+  oldSocket->deleteLater();
+  resetConnectionState();
+
+  socket_ = duplicate->socket_;
+  disconnect(socket_, nullptr, duplicate, nullptr);
+  duplicate->socket_ = new QTcpSocket(duplicate);
+  buffer_ = std::exchange(duplicate->buffer_, {});
+  outgoing_ = duplicate->outgoing_;
+  if (remoteHost_.isEmpty() || remotePort_ == 0) {
+    remoteHost_ = duplicate->remoteHost_;
+    remotePort_ = duplicate->remotePort_;
+  }
+  peerAddress_ = duplicate->peerAddress_;
+  peerName_ = duplicate->peerName_;
+  identityName_ = peerName_;
+  peerSupportsTyping_ = duplicate->peerSupportsTyping_;
+  handshakeComplete_ = true;
+  handshakeClock_ = duplicate->handshakeClock_;
+  closed_ = false;
+  setupSocket();
+
+  duplicate->merged_ = true;
+  duplicate->resetConnectionState();
+  emit peerIdentified(peerName_);
+  emit statusChanged(QStringLiteral("Connected to %1").arg(peerName_));
+  emit duplicate->mergedInto(this);
+  if (!buffer_.isEmpty() || socket_->bytesAvailable() > 0) {
+    QMetaObject::invokeMethod(this, &ChatSession::readData,
+                              Qt::QueuedConnection);
+  }
+}
+
+void ChatSession::retireAsDuplicate(ChatSession *existing) {
+  merged_ = true;
+  cancelOutgoingFiles();
+  disconnect(socket_, nullptr, this, nullptr);
+  socket_->disconnectFromHost();
+  resetConnectionState();
+  emit mergedInto(existing);
+}
 
 void ChatSession::readData() {
   buffer_.append(socket_->readAll());
-  while (true) {
+  while (!merged_) {
     const auto newline = buffer_.indexOf('\n');
     if (newline < 0) {
       if (buffer_.size() > 1024 * 1024) {
@@ -372,12 +553,23 @@ void ChatSession::readData() {
 
 void ChatSession::processLine(const QString &line) {
   if (line.startsWith(QStringLiteral("NICKNAME "))) {
-    peerName_ = line.mid(9).trimmed();
-    if (peerName_.isEmpty()) {
+    const auto name = line.mid(9).trimmed();
+    if (name.isEmpty()) {
       socket_->disconnectFromHost();
       return;
     }
+    const bool firstHandshake = !handshakeComplete_;
+    peerName_ = name;
+    identityName_ = name;
     handshakeComplete_ = true;
+    if (firstHandshake) {
+      handshakeClock_.start();
+      // Sent only after the handshake so the NICKNAME exchange stays
+      // compatible; peers without this line never receive TYPING commands.
+      sendLine(QStringLiteral("CAPABILITIES TYPING"));
+      registry_->resolveDuplicate(this);
+      if (merged_) return;
+    }
     emit peerIdentified(peerName_);
     emit statusChanged(QStringLiteral("Connected to %1").arg(peerName_));
     return;
@@ -400,11 +592,27 @@ void ChatSession::processLine(const QString &line) {
       emit statusChanged(QStringLiteral("Received malformed message."));
       return;
     }
+    setPeerTyping(false);
     emit messageReceived(QString::fromUtf8(message),
                          QString::fromUtf8(originalMessage));
     return;
   }
   const auto parts = line.split(u' ', Qt::KeepEmptyParts);
+  if (parts.value(0) == QStringLiteral("CAPABILITIES") && handshakeComplete_) {
+    peerSupportsTyping_ = parts.contains(QStringLiteral("TYPING"));
+    return;
+  }
+  if (parts.value(0) == QStringLiteral("TYPING") && handshakeComplete_) {
+    // Unknown TYPING variants are ignored for forward compatibility.
+    if (parts.size() == 2 && parts.at(1) == QStringLiteral("START")) {
+      peerSupportsTyping_ = true;
+      setPeerTyping(true);
+      peerTypingExpiryTimer_.start();
+    } else if (parts.size() == 2 && parts.at(1) == QStringLiteral("STOP")) {
+      setPeerTyping(false);
+    }
+    return;
+  }
   if (parts.value(0) == QStringLiteral("TRANSLATE_REQUEST") &&
       parts.size() == 4 && handshakeComplete_) {
     const auto &requestId = parts.at(1);

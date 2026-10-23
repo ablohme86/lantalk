@@ -4,6 +4,7 @@
 #include "gui/dialogs.h"
 #include "protocol/chathistory.h"
 #include "protocol/chatsession.h"
+#include "translationrestorer.h"
 
 #include <QColor>
 #include <QDragEnterEvent>
@@ -34,6 +35,8 @@
 #include <QUrl>
 #include <QUrlQuery>
 #include <QVBoxLayout>
+
+#include <utility>
 
 namespace {
 
@@ -109,6 +112,16 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   imageViewer_ = new ChatImagePreviewWidget(this);
   viewStack_->addWidget(log_);
   viewStack_->addWidget(imageViewer_);
+  typingIndicator_ = new QLabel(this);
+  typingIndicator_->setObjectName(QStringLiteral("typingIndicator"));
+  typingIndicator_->setStyleSheet(
+      QStringLiteral("color: rgb(150, 160, 168); font-style: italic;"));
+  auto typingPolicy = typingIndicator_->sizePolicy();
+  typingPolicy.setRetainSizeWhenHidden(true);
+  typingIndicator_->setSizePolicy(typingPolicy);
+  typingIndicator_->hide();
+  typingAnimation_ = new QTimer(this);
+  typingAnimation_->setInterval(400);
   auto *controls = new QHBoxLayout;
   input_ = new QLineEdit(this);
   translateButton_ = new QPushButton(QStringLiteral("Live Translate"), this);
@@ -128,7 +141,9 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   controls->addWidget(attach);
   layout->addWidget(status_);
   layout->addWidget(viewStack_);
+  layout->addWidget(typingIndicator_);
   layout->addLayout(controls);
+  translationRestorer_ = new TranslationRestorer(session_, this);
   refreshTranslationAvailability();
 
   connect(attach, &QPushButton::clicked, this, [this] {
@@ -139,15 +154,36 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     }
   });
   connect(input_, &QLineEdit::returnPressed, this, &ChatTab::send);
+  // textEdited only fires for user edits, not for the status texts this tab
+  // places in the input.
+  connect(input_, &QLineEdit::textEdited, this, [this](const QString &text) {
+    session_->noteLocalTyping(!text.trimmed().isEmpty());
+  });
+  connect(session_, &ChatSession::peerTypingChanged, this,
+          &ChatTab::updateTypingIndicator);
+  connect(typingAnimation_, &QTimer::timeout, this, [this] {
+    typingAnimationFrame_ = (typingAnimationFrame_ + 1) % 4;
+    updateTypingIndicator();
+  });
   connect(translateButton_, &QPushButton::toggled, this, [this](bool enabled) {
     if (enabled) {
       configureTranslation();
     } else {
       liveTranslate_ = false;
-      session_->stopLiveTranslation();
+      automaticTranslationRequest_ = false;
+      translationRestorer_->disable();
       status_->setText(QStringLiteral("Live Translate is off."));
     }
   });
+  connect(translationRestorer_, &TranslationRestorer::resumeRequested, this,
+          [this](const QString &myLanguage, const QString &peerLanguage) {
+            myLanguage_ = myLanguage;
+            peerLanguage_ = peerLanguage;
+            automaticTranslationRequest_ = true;
+            status_->setText(QStringLiteral("Resuming Live Translate…"));
+          });
+  connect(translationRestorer_, &TranslationRestorer::statusChanged, status_,
+          &QLabel::setText);
   connect(session_, &ChatSession::statusChanged, status_, &QLabel::setText);
   connect(session_, &ChatSession::peerIdentified, this,
           [this](const QString &name) {
@@ -244,6 +280,11 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   });
   connect(session_, &ChatSession::liveTranslationGranted, this, [this] {
     liveTranslate_ = true;
+    automaticTranslationRequest_ = false;
+    {
+      const QSignalBlocker blocker(translateButton_);
+      translateButton_->setChecked(true);
+    }
     status_->setText(QStringLiteral("Live Translate: %1 ↔ %2")
                          .arg(myLanguage_, peerLanguage_));
     translatePendingIncomingMessages();
@@ -253,6 +294,12 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
             liveTranslate_ = false;
             const QSignalBlocker blocker(translateButton_);
             translateButton_->setChecked(false);
+            if (std::exchange(automaticTranslationRequest_, false)) {
+              status_->setText(
+                  QStringLiteral("Live Translate was not resumed: %1")
+                      .arg(message));
+              return;
+            }
             QMessageBox::warning(
                 this, QStringLiteral("Live Translate unavailable"), message);
           });
@@ -277,6 +324,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     connected_ = false;
     if (hasPeerIdentity_) emit titleChanged();
     liveTranslate_ = false;
+    automaticTranslationRequest_ = false;
     {
       const QSignalBlocker blocker(translateButton_);
       translateButton_->setChecked(false);
@@ -330,6 +378,8 @@ QString ChatTab::title() const {
                            : QStringLiteral("%1 (%2)").arg(peer, address);
 }
 
+ChatSession *ChatTab::session() const { return session_; }
+
 QString ChatTab::reconnectAddress() const { return reconnectAddress_; }
 
 quint16 ChatTab::reconnectPort() const { return reconnectPort_; }
@@ -337,6 +387,34 @@ quint16 ChatTab::reconnectPort() const { return reconnectPort_; }
 void ChatTab::setReconnectEndpoint(const QString &address, quint16 port) {
   reconnectAddress_ = address.trimmed();
   reconnectPort_ = port;
+}
+
+void ChatTab::reconnectNow() {
+  if (connected_ || !reconnectTimer_->isActive()) return;
+  reconnectTimer_->stop();
+  retryConnection();
+}
+
+void ChatTab::closeConversation() {
+  reconnectTimer_->stop();
+  session_->closeConnection();
+}
+
+void ChatTab::updateTypingIndicator() {
+  if (!session_->peerTyping()) {
+    typingAnimation_->stop();
+    typingAnimationFrame_ = 0;
+    typingIndicator_->hide();
+    return;
+  }
+  const auto peer = session_->peerName().isEmpty() ? lastPeerName_
+                                                   : session_->peerName();
+  // Pad the dots so the label width stays constant while animating.
+  const auto dots = QString(typingAnimationFrame_, u'.')
+                        .leftJustified(3, QChar(0x2007));
+  typingIndicator_->setText(QStringLiteral("%1 is typing%2").arg(peer, dots));
+  typingIndicator_->show();
+  if (!typingAnimation_->isActive()) typingAnimation_->start();
 }
 
 void ChatTab::retryConnection() {
@@ -369,14 +447,22 @@ void ChatTab::refreshTranslationAvailability() {
     session_->stopLiveTranslation();
   }
   translateButton_->setVisible(available);
+  if (available) translationRestorer_->retry();
 }
 
 void ChatTab::configureTranslation() {
   TranslationDialog dialog(this);
+  const auto saved = translationRestorer_->savedPreference();
+  if (!saved.myLanguage.isEmpty()) {
+    dialog.setLanguages(saved.myLanguage, saved.peerLanguage);
+  } else if (!myLanguage_.isEmpty()) {
+    dialog.setLanguages(myLanguage_, peerLanguage_);
+  }
   if (dialog.exec() == QDialog::Accepted) {
     myLanguage_ = dialog.myLanguage();
     peerLanguage_ = dialog.peerLanguage();
-    session_->requestLiveTranslation(myLanguage_, peerLanguage_);
+    automaticTranslationRequest_ = false;
+    translationRestorer_->request(myLanguage_, peerLanguage_);
   } else {
     const QSignalBlocker blocker(translateButton_);
     translateButton_->setChecked(false);
@@ -392,6 +478,7 @@ void ChatTab::send() {
     return;
   }
   input_->clear();
+  session_->stopLocalTyping();
   if (!liveTranslate_) {
     sendText(text);
     return;

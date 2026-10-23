@@ -17,6 +17,7 @@ class ChatImagePreviewWidget;
 class QDragEnterEvent;
 class QDropEvent;
 class QTimer;
+class TranslationRestorer;
 
 class ChatTab final : public QWidget {
   Q_OBJECT
@@ -24,10 +25,14 @@ class ChatTab final : public QWidget {
 public:
   explicit ChatTab(ChatSession *session, QWidget *parent = nullptr);
   QString title() const;
+  ChatSession *session() const;
   QString reconnectAddress() const;
   quint16 reconnectPort() const;
   void setReconnectEndpoint(const QString &address, quint16 port);
   void refreshTranslationAvailability();
+  // Retries a disconnected conversation now instead of waiting for the timer.
+  void reconnectNow();
+  void closeConversation();
 
 signals:
   void titleChanged();
@@ -74,9 +79,13 @@ private:
                   bool received);
   void appendSystemMessage(const QString &message);
   void retryConnection();
+  void updateTypingIndicator();
 
   ChatSession *session_;
   QLabel *status_;
+  QLabel *typingIndicator_;
+  QTimer *typingAnimation_;
+  int typingAnimationFrame_ = 0;
   QStackedWidget *viewStack_;
   QTextBrowser *log_;
   ChatImagePreviewWidget *imageViewer_;
@@ -91,7 +100,9 @@ private:
   bool historyLoaded_ = false;
   OllamaClient outgoingTranslator_;
   OllamaClient incomingTranslator_;
+  TranslationRestorer *translationRestorer_;
   bool liveTranslate_ = false;
+  bool automaticTranslationRequest_ = false;
   bool outgoingPending_ = false;
   bool fileSendUiActive_ = false;
   QString fileSendPreviousInput_;

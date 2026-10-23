@@ -7,6 +7,7 @@
 #include <QList>
 #include <QObject>
 #include <QHostAddress>
+#include <QPointer>
 #include <QTcpServer>
 #include <QQueue>
 #include <QTimer>
@@ -19,6 +20,7 @@
 
 class ChatSession;
 class QTcpSocket;
+class TranslationRestorer;
 
 class TerminalUi final : public QObject {
   Q_OBJECT
@@ -44,9 +46,9 @@ private:
     };
 
     ChatSession *session;
+    TranslationRestorer *translation = nullptr;
     QString title;
     QList<TranscriptLine> transcript;
-    QList<ChatSession *> retiredSessions;
     bool liveTranslate = false;
     bool historyLoaded = false;
     bool disconnected = false;
@@ -78,11 +80,13 @@ private:
   void acceptDialog();
   void closeDialog();
   void setListenPort(quint16 port);
-  void connectToAddress(const QString &address, quint16 port);
+  void connectToAddress(const QString &address, quint16 port, const QString &nickname = {});
   void acceptConnection();
-  void addSession(QTcpSocket *socket, const QString &title);
+  void addSession(ChatSession *session, const QString &title);
+  void conversationIdentified(ChatSession *session);
+  void mergeConversation(ChatSession *duplicate, ChatSession *existing);
+  void syncLocalTyping();
   void closeConversation(int index);
-  int resumeDisconnectedConversation(int newIndex);
   void sendChatMessage(const QString &text);
   void setStatus(const QString &message);
   void updateTranslationStatus(const QString &idleMessage);
@@ -129,6 +133,8 @@ private:
   QString dialogPrompt_;
   QString dialogInput_;
   QString status_;
+  QPointer<ChatSession> typingSession_;
+  QString typingDraft_;
   int pendingOutgoingTranslations_ = 0;
   int pendingIncomingTranslations_ = 0;
   bool ansi_ = false;

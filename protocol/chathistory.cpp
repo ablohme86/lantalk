@@ -1,7 +1,7 @@
 #include "protocol/chathistory.h"
 
-#include <QCryptographicHash>
-#include <QHostAddress>
+#include "protocol/conversationidentity.h"
+
 #include <QSettings>
 #include <QVariantMap>
 
@@ -10,19 +10,8 @@ namespace {
 constexpr int MaximumStoredEntries = 500;
 
 QString settingsKey(const QString &address, const QString &peerName) {
-  QHostAddress parsedAddress(address.trimmed());
-  const QString normalizedAddress =
-      parsedAddress.isNull() ? address.trimmed().toCaseFolded()
-                             : parsedAddress.toString();
-  const QString normalizedName =
-      peerName.normalized(QString::NormalizationForm_KC)
-          .simplified()
-          .toCaseFolded();
-  const QByteArray identity = normalizedAddress.toUtf8() + '\0' +
-                              normalizedName.toUtf8();
-  const auto digest =
-      QCryptographicHash::hash(identity, QCryptographicHash::Sha256).toHex();
-  return QStringLiteral("chatHistory/%1").arg(QString::fromLatin1(digest));
+  return QStringLiteral("chatHistory/%1")
+      .arg(ConversationIdentity::digest(address, peerName));
 }
 
 } // namespace

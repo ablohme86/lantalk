@@ -4,6 +4,18 @@
 
 ### Added
 
+- Live Translate languages are saved per conversation and restored after
+  reconnects and restarts. Translation resumes automatically once Ollama is
+  reachable with the configured model, retrying while it is unavailable.
+- Connecting to a peer that already has a conversation switches to its tab in
+  both GUI and TUI. Only one connection per IP address and nickname can exist;
+  reconnects and simultaneous connections are merged into the existing tab.
+- A `Name is typing...` indicator in GUI and TUI, using the new
+  `CAPABILITIES TYPING`, `TYPING START`, and `TYPING STOP` protocol lines.
+  Drafts idle for 60 seconds send `TYPING STOP`; stale indicators expire.
+- Unit tests for typing notifications, duplicate-connection handling, and
+  translation restoration (`ctest`).
+
 - GUI and TUI now share per-peer chat history keyed by IP address and nickname.
   Reconnecting to the same peer restores the 20 newest earlier messages in
   italics, followed by an `Earlier messages` divider. Message timestamps are
@@ -21,6 +33,9 @@
   `--tui` remains available to force it.
 
 ### Changed
+
+- The GUI opens a tab for an incoming connection only after its handshake, so
+  duplicate or aborted connections no longer leave stray tabs.
 
 - The TUI shows connection tabs with peer names and addresses in the chat
   header. Press `Tab` to focus the tabs, use the arrow keys to choose one, and
