@@ -50,7 +50,11 @@ private:
   void scanPrivateSubnets();
   void sendDiscoveryProbeBatch();
   void refreshHostList();
-  void addSession(QTcpSocket *socket, const QString &initialTitle);
+  void addSession(QTcpSocket *socket, const QString &initialTitle,
+                  const QString &reconnectAddress, quint16 reconnectPort);
+  void restoreOpenConnections();
+  void persistOpenConnections();
+  quint16 discoveredPortForAddress(const QHostAddress &address) const;
 
   QTcpServer server_;
   struct DiscoveredHost {

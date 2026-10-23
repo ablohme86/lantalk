@@ -46,6 +46,13 @@ inline bool isLocalIPv4Address(const QHostAddress &address)
 inline QList<QHostAddress> privateSubnetHosts()
 {
     QSet<quint32> addresses;
+
+    // These routed LAN/VPN ranges may not appear as local interface subnets.
+    for (quint32 host = 1; host <= 255; ++host) {
+        addresses.insert((10u << 24) | (8u << 16) | host);
+        addresses.insert((10u << 24) | (10u << 16) | (10u << 8) | host);
+    }
+
     for (const auto &interface : QNetworkInterface::allInterfaces()) {
         if (!interface.flags().testFlag(QNetworkInterface::IsUp) ||
             interface.flags().testFlag(QNetworkInterface::IsLoopBack)) {

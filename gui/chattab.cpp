@@ -4,6 +4,7 @@
 #include "gui/dialogs.h"
 #include "protocol/chatsession.h"
 
+#include <QColor>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFile>
@@ -19,6 +20,7 @@
 #include <QPixmap>
 #include <QPushButton>
 #include <QResizeEvent>
+#include <QSettings>
 #include <QSaveFile>
 #include <QSizePolicy>
 #include <QStackedWidget>
@@ -27,6 +29,7 @@
 #include <QTextBlock>
 #include <QTextBrowser>
 #include <QTextImageFormat>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QVBoxLayout>
@@ -109,6 +112,8 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   input_ = new QLineEdit(this);
   translateButton_ = new QPushButton(QStringLiteral("Live Translate"), this);
   translateButton_->setCheckable(true);
+  reconnectTimer_ = new QTimer(this);
+  reconnectTimer_->setInterval(10000);
   auto *separator = new QFrame(this);
   separator->setFrameShape(QFrame::VLine);
   separator->setFrameShadow(QFrame::Sunken);
@@ -143,6 +148,17 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     }
   });
   connect(session_, &ChatSession::statusChanged, status_, &QLabel::setText);
+  connect(session_, &ChatSession::peerIdentified, this,
+          [this](const QString &name) {
+            if (!connected_) {
+              appendSystemMessage(QStringLiteral("Connected to %1").arg(name));
+            }
+            connected_ = true;
+            reconnectTimer_->stop();
+            input_->setEnabled(true);
+            status_->setText(QStringLiteral("Connected to %1").arg(name));
+            emit titleChanged();
+          });
   connect(log_, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
     if (url.scheme() != QStringLiteral("lanchat")) {
       return;
@@ -167,6 +183,10 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(imageViewer_->closeButton(), &QPushButton::clicked, this,
           [this] { viewStack_->setCurrentWidget(log_); });
   connect(session_, &ChatSession::messageReceived, this, &ChatTab::received);
+  connect(session_, &ChatSession::messageReceived, this,
+          [this](const QString &, const QString &) {
+            emit incomingMessageReceived();
+          });
   connect(
       session_, &ChatSession::fileSent, this,
       [this](const QString &name, const QString &path, const QString &mime) {
@@ -235,9 +255,28 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
                          .arg(session_->peerName()));
       });
   connect(session_, &ChatSession::disconnected, this, [this] {
-    status_->setText(QStringLiteral("Disconnected"));
+    if (connected_) {
+      const auto peer = session_->peerName().isEmpty()
+                            ? reconnectAddress_
+                            : session_->peerName();
+      appendSystemMessage(QStringLiteral("Disconnected from %1").arg(peer));
+    }
+    connected_ = false;
+    liveTranslate_ = false;
+    {
+      const QSignalBlocker blocker(translateButton_);
+      translateButton_->setChecked(false);
+    }
+    status_->setText(reconnectAddress_.isEmpty()
+                         ? QStringLiteral("Disconnected")
+                         : QStringLiteral("Disconnected; retrying in 10 seconds"));
     input_->setEnabled(false);
+    if (!reconnectAddress_.isEmpty() && reconnectPort_ != 0 &&
+        !reconnectTimer_->isActive()) {
+      reconnectTimer_->start();
+    }
   });
+  connect(reconnectTimer_, &QTimer::timeout, this, &ChatTab::retryConnection);
   connect(&outgoingTranslator_, &OllamaClient::translated, this,
           &ChatTab::outgoingTranslationFinished);
   connect(&outgoingTranslator_, &OllamaClient::failed, this,
@@ -265,6 +304,35 @@ QString ChatTab::title() const {
   }
   return address.isEmpty() ? peer
                            : QStringLiteral("%1 (%2)").arg(peer, address);
+}
+
+QString ChatTab::reconnectAddress() const { return reconnectAddress_; }
+
+quint16 ChatTab::reconnectPort() const { return reconnectPort_; }
+
+void ChatTab::setReconnectEndpoint(const QString &address, quint16 port) {
+  reconnectAddress_ = address.trimmed();
+  reconnectPort_ = port;
+}
+
+void ChatTab::retryConnection() {
+  if (connected_ || reconnectAddress_.isEmpty() || reconnectPort_ == 0) {
+    return;
+  }
+  status_->setText(QStringLiteral("Reconnecting to %1…")
+                       .arg(reconnectAddress_));
+  session_->reconnectToHost(reconnectAddress_, reconnectPort_);
+}
+
+void ChatTab::appendSystemMessage(const QString &message) {
+  auto cursor = log_->textCursor();
+  cursor.movePosition(QTextCursor::End);
+  QTextCharFormat format;
+  format.setFontItalic(true);
+  format.setForeground(QColor(150, 160, 168));
+  cursor.insertText(QStringLiteral("* %1").arg(message), format);
+  cursor.insertBlock();
+  log_->setTextCursor(cursor);
 }
 
 void ChatTab::refreshTranslationAvailability() {

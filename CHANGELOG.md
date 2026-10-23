@@ -20,6 +20,10 @@
 
 - Chat messages are sent with Enter; the Send button has been removed from the
   chat input row.
+- The GUI saves open chat tabs and restores them on launch. Disconnected peers
+  are retried every 10 seconds while their tab remains open.
+- Host discovery always scans `10.8.0.1–10.8.0.255` and
+  `10.10.10.1–10.10.10.255`, even when those subnets are not local interfaces.
 - The GUI menu bar now has a File menu with Exit LanChat and a Connect... action
   that opens the connection dialog.
 - GUI attachments always start on a new line. Image thumbnails appear in the
@@ -43,6 +47,7 @@
 
 ### Fixed
 
+- The GUI chat transcript now records when a peer connects or disconnects.
 - The TUI no longer prints the connection confirmation twice.
 - The tray's unread badge clears when LANChat becomes the active window and
   does not increment for messages received while the app is in the foreground.

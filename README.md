@@ -4,7 +4,9 @@ LANChat is a Qt 6 desktop client for direct LAN chat using the TCP-based
 `LANCHAT PROTOCOL`. Each connected host has its own chat tab. The optional
 Live Translate feature uses a local Ollama `translategemma` model.
 The desktop app includes a custom chat icon and a system tray icon that shows
-unread messages received while LANChat is in the background.
+unread messages received while LANChat is in the background. The GUI remembers
+open chat tabs across restarts and retries disconnected peers every 10 seconds
+while their tab remains open.
 
 The app automatically selects the ANSI terminal interface when launched from
 an interactive terminal. It uses the desktop GUI otherwise. Pass `--tui` to

@@ -15,6 +15,7 @@ class QTextBrowser;
 class ChatImagePreviewWidget;
 class QDragEnterEvent;
 class QDropEvent;
+class QTimer;
 
 class ChatTab final : public QWidget {
   Q_OBJECT
@@ -22,10 +23,14 @@ class ChatTab final : public QWidget {
 public:
   explicit ChatTab(ChatSession *session, QWidget *parent = nullptr);
   QString title() const;
+  QString reconnectAddress() const;
+  quint16 reconnectPort() const;
+  void setReconnectEndpoint(const QString &address, quint16 port);
   void refreshTranslationAvailability();
 
 signals:
   void titleChanged();
+  void incomingMessageReceived();
 
 private slots:
   void configureTranslation();
@@ -63,6 +68,8 @@ private:
   void appendFile(const QString &sender, const QString &name,
                   const QString &path, const QString &mimeType,
                   bool received);
+  void appendSystemMessage(const QString &message);
+  void retryConnection();
 
   ChatSession *session_;
   QLabel *status_;
@@ -71,6 +78,10 @@ private:
   ChatImagePreviewWidget *imageViewer_;
   QLineEdit *input_;
   QPushButton *translateButton_;
+  QTimer *reconnectTimer_;
+  QString reconnectAddress_;
+  quint16 reconnectPort_ = 0;
+  bool connected_ = false;
   OllamaClient outgoingTranslator_;
   OllamaClient incomingTranslator_;
   bool liveTranslate_ = false;

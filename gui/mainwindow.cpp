@@ -67,14 +67,17 @@ MainWindow::MainWindow() {
             }
           });
   connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
-    tabs_->widget(index)->deleteLater();
+    auto *tab = tabs_->widget(index);
     tabs_->removeTab(index);
+    tab->deleteLater();
+    persistOpenConnections();
   });
   promptForNickname();
   startListening();
   connect(&server_, &QTcpServer::newConnection, this,
           &MainWindow::acceptConnection);
   startDiscovery();
+  restoreOpenConnections();
 }
 
 void MainWindow::showSettings() {
@@ -209,8 +212,10 @@ void MainWindow::showConnectDialog() {
 
 void MainWindow::acceptConnection() {
   while (server_.hasPendingConnections()) {
-    addSession(server_.nextPendingConnection(),
-               QStringLiteral("Incoming connection"));
+    auto *socket = server_.nextPendingConnection();
+    const auto address = socket->peerAddress();
+    addSession(socket, QStringLiteral("Incoming connection"),
+               address.toString(), discoveredPortForAddress(address));
   }
 }
 
@@ -246,8 +251,9 @@ void MainWindow::promptForNickname() {
 
 void MainWindow::connectToAddress(const QString &address, quint16 port) {
   auto *socket = new QTcpSocket(this);
+  addSession(socket, QStringLiteral("Connecting to %1…").arg(address),
+             address, port);
   socket->connectToHost(address, port);
-  addSession(socket, QStringLiteral("Connecting to %1…").arg(address));
 }
 
 void MainWindow::startListening() {
@@ -463,20 +469,77 @@ void MainWindow::refreshHostList() {
   }
 }
 
-void MainWindow::addSession(QTcpSocket *socket, const QString &initialTitle) {
+void MainWindow::addSession(QTcpSocket *socket, const QString &initialTitle,
+                            const QString &reconnectAddress,
+                            quint16 reconnectPort) {
   auto *session = new ChatSession(socket, this);
   auto *tab = new ChatTab(session, tabs_);
   session->setParent(tab);
+  tab->setReconnectEndpoint(reconnectAddress, reconnectPort);
   const auto index = tabs_->addTab(tab, initialTitle);
   tabs_->setCurrentIndex(index);
-  connect(session, &ChatSession::messageReceived, this,
-          [this](const QString &, const QString &) { noteIncomingMessage(); });
-  connect(session, &ChatSession::peerIdentified, tab,
-          [this, tab](const QString &) {
-            tabs_->setTabText(tabs_->indexOf(tab), tab->title());
-          });
+  connect(tab, &ChatTab::incomingMessageReceived, this,
+          [this] { noteIncomingMessage(); });
+  connect(tab, &ChatTab::titleChanged, this, [this, tab] {
+    const auto tabIndex = tabs_->indexOf(tab);
+    if (tabIndex >= 0) {
+      tabs_->setTabText(tabIndex, tab->title());
+      persistOpenConnections();
+    }
+  });
   session->beginHandshake(
       QSettings()
           .value(QStringLiteral("profile/nickname"), QStringLiteral("Guest"))
           .toString());
+  persistOpenConnections();
+}
+
+void MainWindow::restoreOpenConnections() {
+  const auto savedConnections =
+      QSettings()
+          .value(QStringLiteral("connections/openTabs"))
+          .toList();
+  for (const auto &saved : savedConnections) {
+    const auto connection = saved.toMap();
+    const auto address = connection.value(QStringLiteral("address")).toString();
+    bool portIsValid = false;
+    const auto port =
+        connection.value(QStringLiteral("port")).toUInt(&portIsValid);
+    if (!address.trimmed().isEmpty() && portIsValid && port > 0 &&
+        port <= 65535) {
+      connectToAddress(address, quint16(port));
+    }
+  }
+  persistOpenConnections();
+}
+
+void MainWindow::persistOpenConnections() {
+  QVariantList openConnections;
+  for (int index = 0; index < tabs_->count(); ++index) {
+    auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index));
+    if (!tab || tab->reconnectAddress().isEmpty() ||
+        tab->reconnectPort() == 0) {
+      continue;
+    }
+    QVariantMap connection;
+    connection.insert(QStringLiteral("address"), tab->reconnectAddress());
+    connection.insert(QStringLiteral("port"), tab->reconnectPort());
+    openConnections.append(connection);
+  }
+  QSettings().setValue(QStringLiteral("connections/openTabs"),
+                       openConnections);
+}
+
+quint16 MainWindow::discoveredPortForAddress(
+    const QHostAddress &address) const {
+  const DiscoveredHost *mostRecent = nullptr;
+  for (auto current = discoveredHosts_.cbegin();
+       current != discoveredHosts_.cend(); ++current) {
+    if (current->address != address ||
+        (mostRecent && current->lastSeen <= mostRecent->lastSeen)) {
+      continue;
+    }
+    mostRecent = &current.value();
+  }
+  return mostRecent ? mostRecent->port : DefaultPort;
 }

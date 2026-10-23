@@ -12,11 +12,20 @@
 
 ChatSession::ChatSession(QTcpSocket *socket, QObject *parent)
     : QObject(parent), socket_(socket) {
-  socket_->setParent(this);
-  connect(socket_, &QTcpSocket::readyRead, this, &ChatSession::readData);
   outgoingFilePump_.setSingleShot(true);
   connect(&outgoingFilePump_, &QTimer::timeout, this,
           &ChatSession::sendNextFileChunk);
+  setupSocket();
+}
+
+void ChatSession::setupSocket() {
+  socket_->setParent(this);
+  connect(socket_, &QTcpSocket::connected, this, [this] {
+    if (!nickname_.isEmpty() && !handshakeComplete_) {
+      sendLine(QStringLiteral("NICKNAME %1").arg(nickname_));
+    }
+  });
+  connect(socket_, &QTcpSocket::readyRead, this, &ChatSession::readData);
   connect(socket_, &QTcpSocket::bytesWritten, this, [this](qint64) {
     if (outgoingFile_ && socket_->bytesToWrite() < 128 * 1024 &&
         !outgoingFilePump_.isActive()) {
@@ -24,12 +33,14 @@ ChatSession::ChatSession(QTcpSocket *socket, QObject *parent)
     }
   });
   connect(socket_, &QTcpSocket::disconnected, this, [this] {
-    cancelOutgoingFiles();
-    emit disconnected();
+    notifyDisconnected();
   });
   connect(socket_, &QTcpSocket::errorOccurred, this,
           [this](QAbstractSocket::SocketError) {
             emit statusChanged(socket_->errorString());
+            if (socket_->state() == QAbstractSocket::UnconnectedState) {
+              notifyDisconnected();
+            }
           });
 }
 
@@ -45,7 +56,44 @@ ChatSession::~ChatSession() {
 
 void ChatSession::beginHandshake(const QString &nickname) {
   nickname_ = escapeProtocolField(nickname);
-  sendLine(QStringLiteral("NICKNAME %1").arg(nickname_));
+  if (socket_->state() == QAbstractSocket::ConnectedState &&
+      !handshakeComplete_) {
+    sendLine(QStringLiteral("NICKNAME %1").arg(nickname_));
+  }
+}
+
+void ChatSession::reconnectToHost(const QString &address, quint16 port) {
+  if (nickname_.isEmpty() || address.trimmed().isEmpty() || port == 0) {
+    return;
+  }
+
+  cancelOutgoingFiles();
+  auto *oldSocket = socket_;
+  disconnect(oldSocket, nullptr, this, nullptr);
+  oldSocket->abort();
+  oldSocket->deleteLater();
+
+  buffer_.clear();
+  peerName_.clear();
+  handshakeComplete_ = false;
+  translationActive_ = false;
+  peerTranslationActive_ = false;
+  translationRequestId_.clear();
+  incomingFiles_.clear();
+  disconnectNotified_ = false;
+
+  socket_ = new QTcpSocket(this);
+  setupSocket();
+  socket_->connectToHost(address, port);
+}
+
+void ChatSession::notifyDisconnected() {
+  if (disconnectNotified_) {
+    return;
+  }
+  disconnectNotified_ = true;
+  cancelOutgoingFiles();
+  emit disconnected();
 }
 
 void ChatSession::sendMessage(const QString &message,

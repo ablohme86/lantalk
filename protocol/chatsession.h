@@ -18,6 +18,7 @@ public:
   explicit ChatSession(QTcpSocket *socket, QObject *parent = nullptr);
   ~ChatSession() override;
   void beginHandshake(const QString &nickname);
+  void reconnectToHost(const QString &address, quint16 port);
   void sendMessage(const QString &message, const QString &originalMessage = {});
   bool sendFile(const QString &filePath);
   void requestLiveTranslation(const QString &sourceLanguage,
@@ -52,6 +53,8 @@ private:
   void sendLine(const QString &line);
   void startNextFile();
   void cancelOutgoingFiles();
+  void notifyDisconnected();
+  void setupSocket();
 
   struct IncomingFile {
     QString name;
@@ -80,4 +83,5 @@ private:
   qint64 outgoingFileSize_ = 0;
   qint64 outgoingBytesSent_ = 0;
   bool outgoingFileBatchActive_ = false;
+  bool disconnectNotified_ = false;
 };
