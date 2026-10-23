@@ -12,6 +12,7 @@
 #include <QUuid>
 
 class QComboBox;
+class QEvent;
 class QSystemTrayIcon;
 class QTabWidget;
 class QTcpSocket;
@@ -22,6 +23,9 @@ class MainWindow final : public QMainWindow {
 public:
   MainWindow();
   void activateFromAnotherLaunch();
+
+protected:
+  bool event(QEvent *event) override;
 
 private slots:
   void showSettings();
@@ -38,6 +42,7 @@ private:
   void setupTrayIcon();
   void updateTrayIcon();
   void showFromTray();
+  void clearUnreadMessages();
   void noteIncomingMessage();
   void announcePresence();
   void readDiscoveryDatagrams();

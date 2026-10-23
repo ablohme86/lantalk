@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QEvent>
 #include <QGuiApplication>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -98,9 +99,8 @@ void MainWindow::setupTrayIcon() {
           });
   connect(qApp, &QGuiApplication::applicationStateChanged, this,
           [this](Qt::ApplicationState state) {
-            if (state == Qt::ApplicationActive && unreadMessageCount_ > 0) {
-              unreadMessageCount_ = 0;
-              updateTrayIcon();
+            if (state == Qt::ApplicationActive) {
+              clearUnreadMessages();
             }
           });
   updateTrayIcon();
@@ -124,6 +124,13 @@ void MainWindow::showFromTray() {
   activateFromAnotherLaunch();
 }
 
+bool MainWindow::event(QEvent *event) {
+  if (event->type() == QEvent::WindowActivate) {
+    clearUnreadMessages();
+  }
+  return QMainWindow::event(event);
+}
+
 void MainWindow::activateFromAnotherLaunch() {
   if (isMinimized()) showNormal();
   else show();
@@ -131,9 +138,17 @@ void MainWindow::activateFromAnotherLaunch() {
   activateWindow();
 }
 
+void MainWindow::clearUnreadMessages() {
+  if (unreadMessageCount_ == 0) return;
+  unreadMessageCount_ = 0;
+  updateTrayIcon();
+}
+
 void MainWindow::noteIncomingMessage() {
-  if (QGuiApplication::applicationState() == Qt::ApplicationActive &&
-      isVisible() && !isMinimized()) {
+  if (isActiveWindow() ||
+      (QGuiApplication::applicationState() == Qt::ApplicationActive &&
+       isVisible() && !isMinimized())) {
+    clearUnreadMessages();
     return;
   }
   ++unreadMessageCount_;

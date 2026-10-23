@@ -28,3 +28,5 @@
 ### Fixed
 
 - The TUI no longer prints the connection confirmation twice.
+- The tray's unread badge clears when LANChat becomes the active window and
+  does not increment for messages received while the app is in the foreground.
