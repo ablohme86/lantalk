@@ -13,6 +13,8 @@ qt_add_executable(lanchat
     appconfig.h
     ollamaclient.cpp
     ollamaclient.h
+    protocol/chathistory.cpp
+    protocol/chathistory.h
     protocol/chatsession.cpp
     protocol/chatsession.h
     protocol/peerdiscovery.h

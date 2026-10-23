@@ -20,8 +20,13 @@ lanchat --tui
 On its first run, terminal mode asks for a nickname and stores it in the same
 application settings used by the GUI. In a regular TTY it opens a full-screen
 ANSI interface with `Chat` and `Settings` menu items, discovered hosts, chat
-tabs, and a message area. Press `Tab` to move between the host list, chat, and
-menu; use arrow keys to navigate and `Enter` to connect, select, or send.
+tabs labeled with each peer's name and address, and a message area. The host
+list is labeled `HOSTS ON NETWORK`. Press `Tab` to move between the host list,
+chat input, connection tabs, and menu. Use the arrow keys to navigate and
+`Enter` to connect, activate a tab, or send.
+GUI and TUI share chat history for peers with the same IP address and nickname.
+When a conversation is reopened, its 20 newest earlier messages appear in
+italics above an `Earlier messages` divider.
 Press `Alt-C` for the Chat menu (connect, close the active chat, or quit) and
 `Alt-S` for Settings (nickname, Ollama URL/model, and listening port). Menus
 and their confirmations use keyboard-friendly ASCII dialogs; `Esc` cancels.

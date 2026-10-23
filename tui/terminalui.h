@@ -37,15 +37,22 @@ private:
   };
 
   struct Conversation {
+    struct TranscriptLine {
+      QString text;
+      bool historical = false;
+      bool separator = false;
+    };
+
     ChatSession *session;
     QString title;
-    QStringList transcript;
+    QList<TranscriptLine> transcript;
     bool liveTranslate = false;
+    bool historyLoaded = false;
     QString myLanguage;
     QString peerLanguage;
   };
 
-  enum class Focus { Hosts, Chat, Menu };
+  enum class Focus { Hosts, Chat, Conversations, Menu };
   enum class Menu { None, Chat, Settings };
   enum class Dialog { None, Connect, Nickname, OllamaUrl, OllamaModel, ListenPort, CloseChat, Quit };
 
@@ -78,6 +85,7 @@ private:
   int conversationIndex(ChatSession *session) const;
   QList<DiscoveredHost> sortedHosts() const;
   void appendTranscript(int index, const QString &line);
+  void loadConversationHistory(int index);
   void redraw();
   void redrawIfResized();
   QString sanitize(const QString &text) const;
@@ -103,6 +111,7 @@ private:
   QHash<QString, DiscoveredHost> discoveredHosts_;
   QList<Conversation> conversations_;
   int currentConversation_ = -1;
+  int selectedConversation_ = -1;
   int selectedHost_ = 0;
   int selectedMenu_ = 0;
   int selectedAction_ = 0;

@@ -1,6 +1,7 @@
 #include "tui/terminalui.h"
 
 #include "appconfig.h"
+#include "protocol/chathistory.h"
 #include "protocol/peerdiscovery.h"
 #include "protocol/chatsession.h"
 
@@ -357,14 +358,35 @@ void TerminalUi::handleKey(const QByteArray &key)
         focus_ = Focus::Chat;
         status_ = QStringLiteral("Menu closed.");
     } else if (key == "\t") {
-        focus_ = focus_ == Focus::Hosts ? Focus::Chat
-                 : focus_ == Focus::Chat  ? Focus::Menu
-                                           : Focus::Hosts;
+        if (focus_ == Focus::Hosts) {
+            focus_ = Focus::Chat;
+        } else if (focus_ == Focus::Chat) {
+            focus_ = Focus::Conversations;
+            selectedConversation_ = currentConversation_ >= 0
+                                        ? currentConversation_
+                                        : 0;
+        } else if (focus_ == Focus::Conversations) {
+            focus_ = Focus::Menu;
+        } else {
+            focus_ = Focus::Hosts;
+            openMenu_ = Menu::None;
+        }
     } else if (key == "\x1b[A" || key == "\x1b[B") {
         const int delta = key == "\x1b[A" ? -1 : 1;
         if (focus_ == Focus::Hosts) {
             const int count = sortedHosts().size();
             if (count > 0) selectedHost_ = std::clamp(selectedHost_ + delta, 0, count - 1);
+        } else if (focus_ == Focus::Conversations) {
+            if (!conversations_.isEmpty()) {
+                if (selectedConversation_ < 0) {
+                    selectedConversation_ = currentConversation_ >= 0
+                                                ? currentConversation_
+                                                : 0;
+                }
+                selectedConversation_ =
+                    (selectedConversation_ + delta + conversations_.size()) %
+                    conversations_.size();
+            }
         } else if (focus_ == Focus::Menu) {
             if (openMenu_ != Menu::None) {
                 const int actionCount = openMenu_ == Menu::Chat ? 3 : 4;
@@ -375,6 +397,7 @@ void TerminalUi::handleKey(const QByteArray &key)
         } else if (!conversations_.isEmpty()) {
             currentConversation_ = (currentConversation_ + delta + conversations_.size())
                                    % conversations_.size();
+            selectedConversation_ = currentConversation_;
         }
     } else if (key == "\x1b[C" || key == "\x1b[D") {
         if (focus_ == Focus::Menu) {
@@ -384,10 +407,21 @@ void TerminalUi::handleKey(const QByteArray &key)
             } else {
                 selectedMenu_ = selectedMenu_ == 0 ? 1 : 0;
             }
+        } else if (focus_ == Focus::Conversations && !conversations_.isEmpty()) {
+            if (selectedConversation_ < 0) {
+                selectedConversation_ = currentConversation_ >= 0
+                                            ? currentConversation_
+                                            : 0;
+            }
+            const int delta = key == "\x1b[C" ? 1 : -1;
+            selectedConversation_ =
+                (selectedConversation_ + delta + conversations_.size()) %
+                conversations_.size();
         } else if (focus_ == Focus::Chat && !conversations_.isEmpty()) {
             const int delta = key == "\x1b[C" ? 1 : -1;
             currentConversation_ = (currentConversation_ + delta + conversations_.size())
                                    % conversations_.size();
+            selectedConversation_ = currentConversation_;
         }
     } else if (key == "\r" || key == "\n") {
         if (focus_ == Focus::Hosts) {
@@ -396,6 +430,17 @@ void TerminalUi::handleKey(const QByteArray &key)
                 connectToAddress(hosts.at(selectedHost_).address.toString(), hosts.at(selectedHost_).port);
             } else {
                 status_ = QStringLiteral("No discovered host selected.");
+            }
+        } else if (focus_ == Focus::Conversations) {
+            if (selectedConversation_ >= 0 &&
+                selectedConversation_ < conversations_.size()) {
+                currentConversation_ = selectedConversation_;
+                focus_ = Focus::Chat;
+                status_ = QStringLiteral("Active tab: %1")
+                              .arg(conversationTitle(
+                                  conversations_.at(currentConversation_)));
+            } else {
+                status_ = QStringLiteral("No conversations to select.");
             }
         } else if (focus_ == Focus::Menu) {
             if (openMenu_ != Menu::None) activateMenuItem();
@@ -468,6 +513,7 @@ void TerminalUi::handleCommand(const QString &command)
             return;
         }
         currentConversation_ = index;
+        selectedConversation_ = index;
         focus_ = Focus::Chat;
         print(QStringLiteral("Active tab: %1").arg(conversationTitle(conversations_.at(index))));
     } else if (name == QStringLiteral("/close")) {
@@ -684,13 +730,21 @@ void TerminalUi::acceptConnection()
 void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
 {
     auto *session = new ChatSession(socket, this);
-    conversations_.append({session, title, {QStringLiteral("* %1").arg(title)}});
+    Conversation conversation;
+    conversation.session = session;
+    conversation.title = title;
+    conversation.transcript.append(
+        {QStringLiteral("* %1").arg(title), false, false});
+    conversations_.append(conversation);
     const int index = conversations_.size() - 1;
     currentConversation_ = index;
+    selectedConversation_ = index;
     focus_ = Focus::Chat;
     connect(session, &ChatSession::peerIdentified, this, [this, session] {
         for (int index = 0; index < conversations_.size(); ++index) if (conversations_[index].session == session) {
             conversations_[index].title = conversationTitle(conversations_[index]);
+            loadConversationHistory(index);
+            redraw();
             return;
         }
     });
@@ -698,6 +752,8 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
             [this, session](const QString &message, const QString &) {
                 const int index = conversationIndex(session);
                 if (index < 0) return;
+                ChatHistory::append(session->peerAddress(), session->peerName(),
+                                    session->peerName(), message);
                 const auto &conversation = conversations_.at(index);
                 if (!conversation.liveTranslate) {
                     appendTranscript(index,
@@ -799,6 +855,7 @@ void TerminalUi::closeConversation(int index)
     if (conversations_.isEmpty()) currentConversation_ = -1;
     else if (currentConversation_ >= conversations_.size()) currentConversation_ = conversations_.size() - 1;
     else if (index < currentConversation_) --currentConversation_;
+    selectedConversation_ = currentConversation_;
     print(QStringLiteral("Closed tab %1.").arg(index + 1));
 }
 
@@ -812,6 +869,9 @@ void TerminalUi::sendChatMessage(const QString &text)
     if (!conversation.liveTranslate) {
         conversation.session->sendMessage(text);
         appendTranscript(currentConversation_, QStringLiteral("You: %1").arg(text));
+        ChatHistory::append(conversation.session->peerAddress(),
+                            conversation.session->peerName(),
+                            QStringLiteral("You"), text);
         return;
     }
 
@@ -828,6 +888,9 @@ void TerminalUi::sendChatMessage(const QString &text)
                         session->sendMessage(translation, originalMessage);
                         appendTranscript(index,
                                          QStringLiteral("You: %1").arg(originalMessage));
+                        ChatHistory::append(
+                            session->peerAddress(), session->peerName(),
+                            QStringLiteral("You"), originalMessage);
                     }
                 }
                 --pendingOutgoingTranslations_;
@@ -887,10 +950,31 @@ void TerminalUi::appendTranscript(int index, const QString &line)
 {
     if (index >= 0 && index < conversations_.size()) {
         auto &lines = conversations_[index].transcript;
-        lines.append(sanitize(line));
+        lines.append({sanitize(line), false, false});
         if (lines.size() > 200) lines.remove(0, lines.size() - 200);
     }
     redraw();
+}
+
+void TerminalUi::loadConversationHistory(int index)
+{
+    if (index < 0 || index >= conversations_.size()) return;
+    auto &conversation = conversations_[index];
+    if (conversation.historyLoaded) return;
+    conversation.historyLoaded = true;
+    conversation.transcript.clear();
+
+    const auto entries = ChatHistory::load(conversation.session->peerAddress(),
+                                           conversation.session->peerName(), 20);
+    for (const auto &entry : entries) {
+        conversation.transcript.append(
+            {sanitize(QStringLiteral("%1: %2").arg(entry.sender, entry.message)),
+             true, false});
+    }
+    if (!entries.isEmpty()) {
+        conversation.transcript.append(
+            {QStringLiteral("──────── Earlier messages ────────"), false, true});
+    }
 }
 
 QString TerminalUi::sanitize(const QString &text) const
@@ -1007,37 +1091,72 @@ void TerminalUi::redraw()
     for (int row = 0; row < contentRows; ++row) {
         QString left = QStringLiteral("│");
         QString right;
-        if (row == 0) left = QStringLiteral("├── HOSTS %1").arg(
-            QString(std::max(0, sidebar - displayWidth(QStringLiteral("├── HOSTS "))), u'─'));
+        if (row == 0) left = QStringLiteral("├── HOSTS ON NETWORK %1").arg(
+            QString(std::max(0, sidebar - displayWidth(QStringLiteral("├── HOSTS ON NETWORK "))), u'─'));
         else if (row - 1 < hosts.size()) {
             const auto &host = hosts.at(row - 1);
             left = QStringLiteral("│%1 %2").arg(row - 1 == selectedHost_ ? u'>' : u' ').arg(host.nickname);
         } else if (row == hosts.size() + 1 && hosts.isEmpty()) left = QStringLiteral("│ (discovering...)");
         if (row == 0) {
-            right = QStringLiteral("── CHAT %1┤").arg(QString(
-                std::max(0, mainWidth - displayWidth(QStringLiteral("── CHAT ┤"))), u'─'));
+            if (conversations_.isEmpty()) {
+                right = QStringLiteral("── CHAT");
+            } else {
+                QStringList tabs;
+                for (int tab = 0; tab < conversations_.size(); ++tab) {
+                    const QString marker =
+                        focus_ == Focus::Conversations &&
+                                tab == selectedConversation_
+                            ? QStringLiteral("> ")
+                            : tab == currentConversation_ ? QStringLiteral("* ")
+                                                          : QStringLiteral("  ");
+                    tabs.append(QStringLiteral("%1[%2]")
+                                    .arg(marker,
+                                         conversationTitle(conversations_.at(tab))));
+                }
+                right = QStringLiteral("── %1").arg(tabs.join(u' '));
+            }
+            right = elide(right, mainWidth - 1);
+            right += QString(std::max(0, mainWidth - 1 - displayWidth(right)), u'─');
         } else if (row == 1) {
             if (conversations_.isEmpty()) right = QStringLiteral(" No conversations. Select a host and press Enter.");
-            else {
-                for (int tab = 0; tab < conversations_.size(); ++tab)
-                    right += QStringLiteral(" %1%2 ").arg(tab == currentConversation_ ? u'[' : u' ')
-                                 .arg(tab + 1) + (tab == currentConversation_ ? u']' : u' ');
+            else if (focus_ == Focus::Conversations) {
+                right = QStringLiteral(" Use arrow keys to choose a tab, then press Enter.");
             }
         } else if (currentConversation_ >= 0 && currentConversation_ < conversations_.size()) {
             const auto &lines = conversations_.at(currentConversation_).transcript;
             const int first = std::max(0, int(lines.size()) - (contentRows - 3));
-            if (row - 2 + first < lines.size()) right = lines.at(row - 2 + first);
+            if (row - 2 + first < lines.size())
+                right = lines.at(row - 2 + first).text;
         }
         terminalOutput << (focus_ == Focus::Hosts && row > 0 && row - 1 == selectedHost_ ? "\x1b[30;46m" : "\x1b[36m")
                        << elide(left, sidebar) << "\x1b[0m";
         terminalOutput << QString(std::max(0, sidebar - displayWidth(elide(left, sidebar))), u' ')
                        << "\x1b[1;34m" << (row == 0 ? "┬" : "│") << "\x1b[0m";
         if (row == 0) {
-            terminalOutput << "\x1b[36m" << right << "\x1b[0m\x1b[K\n";
+            const QString header = elide(right, mainWidth - 1);
+            const auto headerStyle = focus_ == Focus::Conversations
+                                         ? "\x1b[30;43m"
+                                         : "\x1b[36m";
+            terminalOutput << headerStyle << header << "\x1b[0m"
+                           << QString(std::max(0, mainWidth - 1 - displayWidth(header)), u' ')
+                           << "\x1b[1;34m│\x1b[0m\x1b[K\n";
         } else {
-            terminalOutput << (focus_ == Focus::Chat ? "\x1b[37m" : "") << elide(right, mainWidth - 1)
-                           << "\x1b[0m"
-                           << QString(std::max(0, mainWidth - 1 - displayWidth(elide(right, mainWidth - 1))), u' ')
+            const Conversation::TranscriptLine *line = nullptr;
+            if (row >= 2 && currentConversation_ >= 0 &&
+                currentConversation_ < conversations_.size()) {
+                const auto &lines =
+                    conversations_.at(currentConversation_).transcript;
+                const int first = std::max(0, int(lines.size()) - (contentRows - 3));
+                const int lineIndex = row - 2 + first;
+                if (lineIndex >= 0 && lineIndex < lines.size())
+                    line = &lines.at(lineIndex);
+            }
+            const QString rendered = elide(right, mainWidth - 1);
+            terminalOutput << (focus_ == Focus::Chat ? "\x1b[37m" : "");
+            if (line && line->historical) terminalOutput << "\x1b[3m";
+            if (line && line->separator) terminalOutput << "\x1b[2;4m";
+            terminalOutput << rendered << "\x1b[0m"
+                           << QString(std::max(0, mainWidth - 1 - displayWidth(rendered)), u' ')
                            << "\x1b[1;34m│\x1b[0m\x1b[K\n";
         }
     }

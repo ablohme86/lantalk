@@ -55,7 +55,10 @@ private:
   QTextCursor appendMessage(
       const QString &sender, const QString &message,
       const QString &hoverText = {},
-      const QString &hoverLabel = QStringLiteral("Original"));
+      const QString &hoverLabel = QStringLiteral("Original"),
+      bool historical = false);
+  void loadConversationHistory();
+  void appendHistorySeparator();
   void translatePendingIncomingMessages();
   void translateIncomingMessage(int index);
   void setIncomingMessageText(IncomingMessage &incoming,
@@ -82,6 +85,7 @@ private:
   QString reconnectAddress_;
   quint16 reconnectPort_ = 0;
   bool connected_ = false;
+  bool historyLoaded_ = false;
   OllamaClient outgoingTranslator_;
   OllamaClient incomingTranslator_;
   bool liveTranslate_ = false;

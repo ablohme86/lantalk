@@ -2,6 +2,7 @@
 
 #include "appconfig.h"
 #include "gui/dialogs.h"
+#include "protocol/chathistory.h"
 #include "protocol/chatsession.h"
 
 #include <QColor>
@@ -150,6 +151,10 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(session_, &ChatSession::statusChanged, status_, &QLabel::setText);
   connect(session_, &ChatSession::peerIdentified, this,
           [this](const QString &name) {
+            if (!historyLoaded_) {
+              historyLoaded_ = true;
+              loadConversationHistory();
+            }
             if (!connected_) {
               appendSystemMessage(QStringLiteral("Connected to %1").arg(name));
             }
@@ -329,6 +334,7 @@ void ChatTab::appendSystemMessage(const QString &message) {
   cursor.movePosition(QTextCursor::End);
   QTextCharFormat format;
   format.setFontItalic(true);
+  format.setFontUnderline(true);
   format.setForeground(QColor(150, 160, 168));
   cursor.insertText(QStringLiteral("* %1").arg(message), format);
   cursor.insertBlock();
@@ -384,6 +390,8 @@ void ChatTab::send() {
 void ChatTab::received(const QString &message, const QString &originalMessage) {
   const auto cursor = appendMessage(session_->peerName(), message,
                                     originalMessage);
+  ChatHistory::append(session_->peerAddress(), session_->peerName(),
+                      session_->peerName(), message);
   const int index = incomingMessages_.size();
   incomingMessages_.append(
       {message, cursor, !originalMessage.isEmpty(), false});
@@ -420,6 +428,8 @@ void ChatTab::outgoingTranslationFinished(const QString &translation,
   session_->sendMessage(translation, pendingOriginal_);
   appendMessage(QStringLiteral("You"), pendingOriginal_, translation,
                 QStringLiteral("Sent translation"));
+  ChatHistory::append(session_->peerAddress(), session_->peerName(),
+                      QStringLiteral("You"), pendingOriginal_);
   pendingOriginal_.clear();
   input_->setFocus(Qt::OtherFocusReason);
 }
@@ -432,6 +442,8 @@ void ChatTab::incomingTranslationFinished(const QString &translation,
 void ChatTab::sendText(const QString &text) {
   session_->sendMessage(text);
   appendMessage(QStringLiteral("You"), text);
+  ChatHistory::append(session_->peerAddress(), session_->peerName(),
+                      QStringLiteral("You"), text);
   input_->setFocus(Qt::OtherFocusReason);
 }
 
@@ -453,13 +465,16 @@ void ChatTab::dropEvent(QDropEvent *event) {
 QTextCursor ChatTab::appendMessage(const QString &sender,
                                    const QString &message,
                                    const QString &hoverText,
-                                   const QString &hoverLabel) {
+                                   const QString &hoverLabel,
+                                   bool historical) {
   auto cursor = log_->textCursor();
   cursor.movePosition(QTextCursor::End);
   QTextCharFormat senderFormat;
   senderFormat.setFontWeight(QFont::Bold);
+  senderFormat.setFontItalic(historical);
   cursor.insertText(sender + QStringLiteral(": "), senderFormat);
   QTextCharFormat messageFormat;
+  messageFormat.setFontItalic(historical);
   if (!hoverText.isEmpty()) {
     messageFormat.setToolTip(
         QStringLiteral("%1: %2").arg(hoverLabel, hoverText));
@@ -474,6 +489,30 @@ QTextCursor ChatTab::appendMessage(const QString &sender,
   messageCursor.setPosition(messageStart);
   messageCursor.setPosition(messageEnd, QTextCursor::KeepAnchor);
   return messageCursor;
+}
+
+void ChatTab::loadConversationHistory() {
+  const auto entries = ChatHistory::load(session_->peerAddress(),
+                                         session_->peerName(), 20);
+  if (entries.isEmpty()) return;
+
+  for (const auto &entry : entries) {
+    appendMessage(entry.sender, entry.message, {},
+                  QStringLiteral("Original"), true);
+  }
+  appendHistorySeparator();
+}
+
+void ChatTab::appendHistorySeparator() {
+  auto cursor = log_->textCursor();
+  cursor.movePosition(QTextCursor::End);
+  QTextCharFormat format;
+  format.setFontItalic(true);
+  format.setForeground(QColor(150, 160, 168));
+  cursor.insertText(QStringLiteral("──────── Earlier messages ────────"),
+                    format);
+  cursor.insertBlock();
+  log_->setTextCursor(cursor);
 }
 
 void ChatTab::setIncomingMessageText(IncomingMessage &incoming,
