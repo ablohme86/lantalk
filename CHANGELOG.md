@@ -4,6 +4,8 @@
 
 ### Added
 
+- Pushing a `vX.Y.Z` tag now builds a Windows x64 release and publishes both a
+  portable ZIP and an MSI installer to a GitHub Release.
 - GUI and TUI discovery now probe private IPv4 subnets with unicast UDP, so
   peers can be found without relying on broadcast delivery. Probes use the
   discovery port and peers advertise their TCP chat port (45454 by default).

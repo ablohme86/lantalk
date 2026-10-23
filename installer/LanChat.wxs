@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+      Id="LANChat"
+      Name="LANChat"
+      Manufacturer="LANChat"
+      Version="$(var.ProductVersion)"
+      UpgradeCode="{2A4E8E36-8B61-4FD5-B6D0-7B245BB52E27}">
+    <MajorUpgrade DowngradeErrorMessage="A newer version of LANChat is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <Files Include="../dist/windows/**" />
+  </Package>
+</Wix>

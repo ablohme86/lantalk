@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  windows-release:
+    runs-on: windows-2022
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          arch: win64_msvc2022_64
+
+      - name: Read release version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -notmatch '^v(?<version>\d+\.\d+\.\d+)(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Release tags must use vMAJOR.MINOR.PATCH, optionally followed by a prerelease suffix."
+          }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "value=$($Matches['version'])"
+
+      - name: Configure Windows x64 build
+        shell: pwsh
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR"
+
+      - name: Build LANChat
+        run: cmake --build build --config Release --parallel
+
+      - name: Stage portable Windows app
+        shell: pwsh
+        run: |
+          $stageDir = Join-Path $env:RUNNER_TEMP 'lanchat-install'
+          $appDir = Join-Path $env:GITHUB_WORKSPACE 'dist\windows'
+          $zipPath = Join-Path $env:GITHUB_WORKSPACE "dist\LanChat-$env:GITHUB_REF_NAME-windows-x64.zip"
+
+          cmake --install build --config Release --prefix $stageDir
+          New-Item -ItemType Directory -Force -Path $appDir | Out-Null
+          Copy-Item -Path (Join-Path $stageDir 'bin\*') -Destination $appDir -Recurse -Force
+
+          if (-not (Test-Path (Join-Path $appDir 'lanchat.exe'))) {
+            throw 'The staged Windows app is missing lanchat.exe.'
+          }
+
+          Compress-Archive -Path (Join-Path $appDir '*') -DestinationPath $zipPath -CompressionLevel Optimal
+
+      - name: Install WiX Toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 7.0.0
+          Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.dotnet\tools"
+
+      - name: Build MSI installer
+        shell: pwsh
+        env:
+          PRODUCT_VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          $msiPath = "dist\LanChat-$env:GITHUB_REF_NAME-windows-x64.msi"
+          wix build -acceptEula wix7 -arch x64 -d "ProductVersion=$env:PRODUCT_VERSION" -o $msiPath installer\LanChat.wxs
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/LanChat-${{ github.ref_name }}-windows-x64.msi
+            dist/LanChat-${{ github.ref_name }}-windows-x64.zip
