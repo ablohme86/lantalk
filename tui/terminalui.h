@@ -8,6 +8,7 @@
 #include <QObject>
 #include <QHostAddress>
 #include <QTcpServer>
+#include <QQueue>
 #include <QTimer>
 #include <QUdpSocket>
 #include <QUuid>
@@ -54,6 +55,8 @@ private:
   void startDiscovery();
   void announcePresence();
   void readDiscoveryDatagrams();
+  void scanPrivateSubnets();
+  void sendDiscoveryProbeBatch();
   void handleInput();
   void flushEscape();
   void handleKey(const QByteArray &key);
@@ -90,6 +93,10 @@ private:
   QTcpServer server_;
   QUdpSocket discoverySocket_;
   QTimer discoveryTimer_;
+  QTimer subnetScanTimer_;
+  QTimer probeSendTimer_;
+  QQueue<QHostAddress> pendingDiscoveryProbes_;
+  int discoveredHostExpiryMs_ = 7000;
   const QString discoveryId_ =
       QUuid::createUuid().toString(QUuid::WithoutBraces);
   QHash<QString, DiscoveredHost> discoveredHosts_;

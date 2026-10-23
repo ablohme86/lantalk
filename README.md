@@ -6,9 +6,10 @@ Live Translate feature uses a local Ollama `translategemma` model.
 The desktop app includes a custom chat icon and a system tray icon that shows
 unread messages received while LANChat is in the background.
 
-The desktop GUI is the default. Run with `--tui` for an ANSI terminal interface
-that listens for chats, discovers LANChat peers, and supports multiple
-conversations:
+The app automatically selects the ANSI terminal interface when launched from
+an interactive terminal. It uses the desktop GUI otherwise. Pass `--tui` to
+force terminal mode. The TUI listens for chats, discovers LANChat peers, and
+supports multiple conversations:
 
 ```sh
 lanchat --tui
@@ -31,8 +32,12 @@ interactive TTY. Enable translation for the active conversation with
 in the bottom status line.
 
 Available LANChat hosts are discovered automatically and shown as
-`Nickname (IP address)` in the read-only Host selector. Selecting a discovered
-host connects immediately.
+`Nickname (IP address)` in the read-only Host selector. LANChat uses UDP
+announcements and unicast probes to addresses in private IPv4 interface
+subnets; peers answer with their configured TCP chat port (45454 by default).
+Subnets wider than `/16` are skipped to avoid sweeping very large private
+address ranges. LANChat filters its own discovery ID and local interface
+addresses from the host list. Selecting a discovered host connects immediately.
 
 Drop images or files into a conversation to send them to the connected host.
 Images are displayed in the chat log; received files are stored in the

@@ -15,6 +15,7 @@ qt_add_executable(lanchat
     ollamaclient.h
     protocol/chatsession.cpp
     protocol/chatsession.h
+    protocol/peerdiscovery.h
     tui/terminalui.cpp
     tui/terminalui.h
     gui/appicon.cpp

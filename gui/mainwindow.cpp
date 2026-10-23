@@ -5,6 +5,7 @@
 #include "gui/chattab.h"
 #include "gui/dialogs.h"
 #include "protocol/chatsession.h"
+#include "protocol/peerdiscovery.h"
 
 #include <QAction>
 #include <QApplication>
@@ -233,7 +234,17 @@ void MainWindow::startDiscovery() {
   connect(&discoveryTimer_, &QTimer::timeout, this,
           &MainWindow::announcePresence);
   discoveryTimer_.start();
+
+  probeSendTimer_.setInterval(10);
+  connect(&probeSendTimer_, &QTimer::timeout, this,
+          &MainWindow::sendDiscoveryProbeBatch);
+  subnetScanTimer_.setInterval(5000);
+  connect(&subnetScanTimer_, &QTimer::timeout, this,
+          &MainWindow::scanPrivateSubnets);
+  subnetScanTimer_.start();
+
   announcePresence();
+  scanPrivateSubnets();
 }
 
 void MainWindow::announcePresence() {
@@ -259,7 +270,7 @@ void MainWindow::announcePresence() {
 
   const auto now = QDateTime::currentDateTimeUtc();
   for (auto host = discoveredHosts_.begin(); host != discoveredHosts_.end();) {
-    if (host->lastSeen.msecsTo(now) > 7000) {
+    if (host->lastSeen.msecsTo(now) > discoveredHostExpiryMs_) {
       host = discoveredHosts_.erase(host);
     } else {
       ++host;
@@ -278,9 +289,34 @@ void MainWindow::readDiscoveryDatagrams() {
                                   &senderPort);
     const auto parts =
         QString::fromUtf8(data).trimmed().split(u' ', Qt::KeepEmptyParts);
+    if (parts.size() == 2 &&
+        parts.at(0) == QStringLiteral("LANCHAT_QUERY") &&
+        !parts.at(1).isEmpty() && parts.at(1).size() <= 64 &&
+        senderPort == DiscoveryPort &&
+        PeerDiscovery::isPrivateIPv4Address(senderAddress) &&
+        !PeerDiscovery::isLocalIPv4Address(senderAddress)) {
+      const auto nickname = escapeProtocolField(
+          QSettings()
+              .value(QStringLiteral("profile/nickname"), QStringLiteral("Guest"))
+              .toString());
+      const auto encodedNickname =
+          nickname.toUtf8().toBase64(QByteArray::Base64UrlEncoding);
+      const auto listenPort =
+          QSettings()
+              .value(QStringLiteral("network/listenPort"), DefaultPort)
+              .toUInt();
+      const auto response =
+          QStringLiteral("LANCHAT_DISCOVER %1 %2 %3")
+              .arg(discoveryId_, QString::fromLatin1(encodedNickname))
+              .arg(listenPort)
+              .toUtf8();
+      discoverySocket_.writeDatagram(response, senderAddress, senderPort);
+      continue;
+    }
     if (parts.size() != 4 ||
         parts.at(0) != QStringLiteral("LANCHAT_DISCOVER") ||
-        parts.at(1) == discoveryId_) {
+        parts.at(1) == discoveryId_ ||
+        PeerDiscovery::isLocalIPv4Address(senderAddress)) {
       continue;
     }
     bool portIsValid = false;
@@ -296,6 +332,38 @@ void MainWindow::readDiscoveryDatagrams() {
                                   peerPort, QDateTime::currentDateTimeUtc()});
   }
   refreshHostList();
+}
+
+void MainWindow::scanPrivateSubnets() {
+  if (!pendingDiscoveryProbes_.isEmpty()) {
+    return;
+  }
+
+  const auto targets = PeerDiscovery::privateSubnetHosts();
+  discoveredHostExpiryMs_ =
+      PeerDiscovery::peerExpiryMilliseconds(targets.size());
+  if (targets.isEmpty()) {
+    return;
+  }
+
+  for (const auto &target : targets) {
+    pendingDiscoveryProbes_.enqueue(target);
+  }
+  if (!probeSendTimer_.isActive()) {
+    probeSendTimer_.start();
+  }
+}
+
+void MainWindow::sendDiscoveryProbeBatch() {
+  const auto query =
+      QStringLiteral("LANCHAT_QUERY %1").arg(discoveryId_).toUtf8();
+  for (int sent = 0; sent < 20 && !pendingDiscoveryProbes_.isEmpty(); ++sent) {
+    discoverySocket_.writeDatagram(query, pendingDiscoveryProbes_.dequeue(),
+                                   DiscoveryPort);
+  }
+  if (pendingDiscoveryProbes_.isEmpty()) {
+    probeSendTimer_.stop();
+  }
 }
 
 void MainWindow::refreshHostList() {

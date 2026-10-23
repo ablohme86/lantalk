@@ -1,6 +1,7 @@
 #include "tui/terminalui.h"
 
 #include "appconfig.h"
+#include "protocol/peerdiscovery.h"
 #include "protocol/chatsession.h"
 
 #include <QCoreApplication>
@@ -166,7 +167,17 @@ void TerminalUi::startDiscovery()
     discoveryTimer_.setInterval(2000);
     connect(&discoveryTimer_, &QTimer::timeout, this, &TerminalUi::announcePresence);
     discoveryTimer_.start();
+
+    probeSendTimer_.setInterval(10);
+    connect(&probeSendTimer_, &QTimer::timeout, this,
+            &TerminalUi::sendDiscoveryProbeBatch);
+    subnetScanTimer_.setInterval(5000);
+    connect(&subnetScanTimer_, &QTimer::timeout, this,
+            &TerminalUi::scanPrivateSubnets);
+    subnetScanTimer_.start();
+
     announcePresence();
+    scanPrivateSubnets();
 }
 
 void TerminalUi::announcePresence()
@@ -182,7 +193,9 @@ void TerminalUi::announcePresence()
 
     const auto now = QDateTime::currentDateTimeUtc();
     for (auto host = discoveredHosts_.begin(); host != discoveredHosts_.end();) {
-        host = host->lastSeen.msecsTo(now) > 7000 ? discoveredHosts_.erase(host) : std::next(host);
+        host = host->lastSeen.msecsTo(now) > discoveredHostExpiryMs_
+                   ? discoveredHosts_.erase(host)
+                   : std::next(host);
     }
     if (ansi_) {
         redraw();
@@ -197,8 +210,22 @@ void TerminalUi::readDiscoveryDatagrams()
         quint16 senderPort = 0;
         discoverySocket_.readDatagram(data.data(), data.size(), &address, &senderPort);
         const auto parts = QString::fromUtf8(data).trimmed().split(u' ', Qt::KeepEmptyParts);
+        if (parts.size() == 2 && parts.at(0) == QStringLiteral("LANCHAT_QUERY")
+            && !parts.at(1).isEmpty() && parts.at(1).size() <= 64
+            && senderPort == DiscoveryPort
+            && PeerDiscovery::isPrivateIPv4Address(address)
+            && !PeerDiscovery::isLocalIPv4Address(address)) {
+            const auto encodedNickname = nickname().toUtf8().toBase64(QByteArray::Base64UrlEncoding);
+            const quint16 port = QSettings().value(QStringLiteral("network/listenPort"), DefaultPort).toUInt();
+            const auto response = QStringLiteral("LANCHAT_DISCOVER %1 %2 %3")
+                                      .arg(discoveryId_, QString::fromLatin1(encodedNickname))
+                                      .arg(port)
+                                      .toUtf8();
+            discoverySocket_.writeDatagram(response, address, senderPort);
+            continue;
+        }
         if (parts.size() != 4 || parts.at(0) != QStringLiteral("LANCHAT_DISCOVER")
-            || parts.at(1) == discoveryId_) {
+            || parts.at(1) == discoveryId_ || PeerDiscovery::isLocalIPv4Address(address)) {
             continue;
         }
         bool validPort = false;
@@ -215,6 +242,27 @@ void TerminalUi::readDiscoveryDatagrams()
     if (ansi_) {
         redraw();
     }
+}
+
+void TerminalUi::scanPrivateSubnets()
+{
+    if (!pendingDiscoveryProbes_.isEmpty()) return;
+
+    const auto targets = PeerDiscovery::privateSubnetHosts();
+    discoveredHostExpiryMs_ = PeerDiscovery::peerExpiryMilliseconds(targets.size());
+    if (targets.isEmpty()) return;
+
+    for (const auto &target : targets) pendingDiscoveryProbes_.enqueue(target);
+    if (!probeSendTimer_.isActive()) probeSendTimer_.start();
+}
+
+void TerminalUi::sendDiscoveryProbeBatch()
+{
+    const auto query = QStringLiteral("LANCHAT_QUERY %1").arg(discoveryId_).toUtf8();
+    for (int sent = 0; sent < 20 && !pendingDiscoveryProbes_.isEmpty(); ++sent) {
+        discoverySocket_.writeDatagram(query, pendingDiscoveryProbes_.dequeue(), DiscoveryPort);
+    }
+    if (pendingDiscoveryProbes_.isEmpty()) probeSendTimer_.stop();
 }
 
 void TerminalUi::handleInput()
