@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.6.0 - 2026-10-23
+
 ### Changed
 
 - The GUI shows conversations as chat bubbles: received messages on the
