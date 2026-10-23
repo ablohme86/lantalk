@@ -86,6 +86,7 @@ private:
   void sendChatMessage(const QString &text);
   void setStatus(const QString &message);
   void updateTranslationStatus(const QString &idleMessage);
+  bool currentConversationDisconnected() const;
   int conversationIndex(ChatSession *session) const;
   QList<DiscoveredHost> sortedHosts() const;
   void appendTranscript(int index, const QString &line);

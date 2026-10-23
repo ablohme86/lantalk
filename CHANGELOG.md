@@ -33,7 +33,9 @@
   sockets, retain the address after disconnect, and label disconnected peers as
   `Nickname (Disconnected)`.
 - The TUI reuses a disconnected tab when the same IP and nickname reconnect.
-  `Ctrl-S` closes the active chat tab and disconnects it.
+  `Ctrl-W` closes the active chat tab and disconnects it.
+- Disconnected chat inputs are disabled and show an italic reconnect prompt in
+  both GUI and TUI; messages cannot be sent until the connection returns.
 - Tabs with messages received in another conversation are highlighted until
   selected. The GUI's default font size is now 11 pt.
 - Chat messages are sent with Enter; the Send button has been removed from the

@@ -85,7 +85,7 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
     escapeTimer_.setSingleShot(true);
     escapeTimer_.setInterval(35);
     connect(&escapeTimer_, &QTimer::timeout, this, &TerminalUi::flushEscape);
-    status_ = QStringLiteral("Tab changes focus; arrows navigate; Enter selects or sends; Ctrl-S closes the active chat.");
+    status_ = QStringLiteral("Tab changes focus; arrows navigate; Enter selects or sends; Ctrl-W closes the active chat.");
     redraw();
 }
 
@@ -284,7 +284,12 @@ void TerminalUi::handleInput()
         if (text.startsWith(u'/')) {
             handleCommand(text);
         } else if (!text.isEmpty()) {
-            sendChatMessage(text);
+            if (currentConversationDisconnected()) {
+                setStatus(QStringLiteral(
+                    "Re-connect to this host to start chatting"));
+            } else {
+                sendChatMessage(text);
+            }
         }
         printPrompt();
         return;
@@ -400,6 +405,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                                    % conversations_.size();
             selectedConversation_ = currentConversation_;
             conversations_[currentConversation_].unread = false;
+            if (currentConversationDisconnected()) input_.clear();
         }
     } else if (key == "\x1b[C" || key == "\x1b[D") {
         if (focus_ == Focus::Menu) {
@@ -425,6 +431,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                                    % conversations_.size();
             selectedConversation_ = currentConversation_;
             conversations_[currentConversation_].unread = false;
+            if (currentConversationDisconnected()) input_.clear();
         }
     } else if (key == "\r" || key == "\n") {
         if (focus_ == Focus::Hosts) {
@@ -439,6 +446,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                 selectedConversation_ < conversations_.size()) {
                 currentConversation_ = selectedConversation_;
                 conversations_[currentConversation_].unread = false;
+                if (currentConversationDisconnected()) input_.clear();
                 focus_ = Focus::Chat;
                 status_ = QStringLiteral("Active tab: %1")
                               .arg(conversationTitle(
@@ -454,6 +462,9 @@ void TerminalUi::handleKey(const QByteArray &key)
                 status_ = selectedMenu_ == 0 ? QStringLiteral("Chat menu open.")
                                              : QStringLiteral("Settings menu open.");
             }
+        } else if (currentConversationDisconnected()) {
+            input_.clear();
+            status_ = QStringLiteral("Re-connect to this host to start chatting");
         } else {
             const QString text = input_.trimmed();
             input_.clear();
@@ -468,7 +479,7 @@ void TerminalUi::handleKey(const QByteArray &key)
         }
     } else if (key == "\x7f" || key == "\b") {
         if (focus_ == Focus::Chat && !input_.isEmpty()) input_.chop(1);
-    } else if (key == "\x13") {
+    } else if (key == "\x17") {
         if (currentConversation_ >= 0 &&
             currentConversation_ < conversations_.size()) {
             closeConversation(currentConversation_);
@@ -479,7 +490,11 @@ void TerminalUi::handleKey(const QByteArray &key)
         QCoreApplication::quit();
         return;
     } else if (focus_ == Focus::Chat && key.size() == 1 && key.at(0) >= ' ') {
-        input_.append(QString::fromUtf8(key));
+        if (currentConversationDisconnected()) {
+            status_ = QStringLiteral("Re-connect to this host to start chatting");
+        } else {
+            input_.append(QString::fromUtf8(key));
+        }
     }
     redraw();
 }
@@ -491,7 +506,7 @@ void TerminalUi::handleCommand(const QString &command)
     if (name == QStringLiteral("/help")) {
         print(QStringLiteral("/hosts, /connect <host|number> [port], /tabs, /use <tab>, /close [tab], "
                              "/nick <name>, /translate <my language> | <peer language>, "
-                             "/stoptranslate, /quit. In the full-screen UI use Tab and arrows; Ctrl-S closes the active chat."));
+                             "/stoptranslate, /quit. In the full-screen UI use Tab and arrows; Ctrl-W closes the active chat."));
     } else if (name == QStringLiteral("/hosts")) {
         focus_ = Focus::Hosts;
         printHosts();
@@ -530,6 +545,7 @@ void TerminalUi::handleCommand(const QString &command)
         currentConversation_ = index;
         selectedConversation_ = index;
         conversations_[index].unread = false;
+        if (currentConversationDisconnected()) input_.clear();
         focus_ = Focus::Chat;
         print(QStringLiteral("Active tab: %1").arg(conversationTitle(conversations_.at(index))));
     } else if (name == QStringLiteral("/close")) {
@@ -868,6 +884,7 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
         const int index = conversationIndex(session);
         if (index >= 0) {
             conversations_[index].disconnected = true;
+            if (index == currentConversation_) input_.clear();
             appendTranscript(index, QStringLiteral("* Disconnected."));
         }
         setStatus(QStringLiteral("Disconnected."));
@@ -895,6 +912,7 @@ void TerminalUi::closeConversation(int index)
     selectedConversation_ = currentConversation_;
     if (currentConversation_ >= 0)
         conversations_[currentConversation_].unread = false;
+    if (currentConversationDisconnected()) input_.clear();
     print(QStringLiteral("Closed tab %1.").arg(index + 1));
 }
 
@@ -980,6 +998,13 @@ int TerminalUi::conversationIndex(ChatSession *session) const
                                         return conversation.session == session;
                                     });
     return found == conversations_.cend() ? -1 : int(found - conversations_.cbegin());
+}
+
+bool TerminalUi::currentConversationDisconnected() const
+{
+    return currentConversation_ >= 0 &&
+           currentConversation_ < conversations_.size() &&
+           conversations_.at(currentConversation_).disconnected;
 }
 
 int TerminalUi::resumeDisconnectedConversation(int newIndex)
@@ -1314,7 +1339,15 @@ void TerminalUi::redraw()
     terminalOutput << "\x1b[1;34m" << bottom << "\x1b[0m\x1b[K\n";
     terminalOutput << "\x1b[30;46m" << elide(QStringLiteral(" %1").arg(status_), terminalColumns_)
                    << "\x1b[0m\x1b[K\n";
-    terminalOutput << "\x1b[1;32m> \x1b[0m" << elide(input_, terminalColumns_ - 2) << "\x1b[K";
+    if (currentConversationDisconnected()) {
+        terminalOutput << "\x1b[2;3m> "
+                       << elide(QStringLiteral("Re-connect to this host to start chatting"),
+                                terminalColumns_ - 2)
+                       << "\x1b[0m\x1b[K";
+    } else {
+        terminalOutput << "\x1b[1;32m> \x1b[0m"
+                       << elide(input_, terminalColumns_ - 2) << "\x1b[K";
+    }
     drawDialog();
     terminalOutput << "\x1b[?25h" << Qt::flush;
 }

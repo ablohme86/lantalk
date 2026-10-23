@@ -162,6 +162,11 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
             }
             connected_ = true;
             reconnectTimer_->stop();
+            input_->clear();
+            input_->setReadOnly(false);
+            auto inputFont = input_->font();
+            inputFont.setItalic(false);
+            input_->setFont(inputFont);
             input_->setEnabled(true);
             status_->setText(QStringLiteral("Connected to %1").arg(name));
             emit titleChanged();
@@ -279,6 +284,12 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     status_->setText(reconnectAddress_.isEmpty()
                          ? QStringLiteral("Disconnected")
                          : QStringLiteral("Disconnected; retrying in 10 seconds"));
+    input_->setText(
+        QStringLiteral("Re-connect to this host to start chatting"));
+    input_->setReadOnly(true);
+    auto inputFont = input_->font();
+    inputFont.setItalic(true);
+    input_->setFont(inputFont);
     input_->setEnabled(false);
     if (!reconnectAddress_.isEmpty() && reconnectPort_ != 0 &&
         !reconnectTimer_->isActive()) {
