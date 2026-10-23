@@ -17,6 +17,8 @@
 - GUI attachments always start on a new line. Image thumbnails appear in the
   conversation and open in a full-view chat panel with a close button when
   clicked.
+- Chat windows have an attachment icon button that opens a file picker to send
+  a file.
 - File sends are asynchronous and show italic progress in the chat input.
 - Received attachments are stored in the OS cache, removed when their chat
   closes, and include a `Save as...` link. Sent attachments show only the

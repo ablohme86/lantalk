@@ -9,6 +9,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFrame>
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -20,6 +21,7 @@
 #include <QResizeEvent>
 #include <QSaveFile>
 #include <QStackedWidget>
+#include <QStyle>
 #include <QSignalBlocker>
 #include <QTextBlock>
 #include <QTextBrowser>
@@ -106,15 +108,31 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   translateButton_ = new QPushButton(QStringLiteral("Live Translate"), this);
   translateButton_->setCheckable(true);
   auto *send = new QPushButton(QStringLiteral("Send"), this);
+  auto *separator = new QFrame(this);
+  separator->setFrameShape(QFrame::VLine);
+  separator->setFrameShadow(QFrame::Sunken);
+  auto *attach = new QPushButton(this);
+  attach->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
+  attach->setToolTip(QStringLiteral("Attach file"));
+  attach->setAccessibleName(QStringLiteral("Attach file"));
   controls->addWidget(input_);
   controls->addWidget(translateButton_);
   controls->addWidget(send);
+  controls->addWidget(separator);
+  controls->addWidget(attach);
   layout->addWidget(status_);
   layout->addWidget(viewStack_);
   layout->addLayout(controls);
   refreshTranslationAvailability();
 
   connect(send, &QPushButton::clicked, this, &ChatTab::send);
+  connect(attach, &QPushButton::clicked, this, [this] {
+    const auto path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Open file"));
+    if (!path.isEmpty()) {
+      session_->sendFile(path);
+    }
+  });
   connect(input_, &QLineEdit::returnPressed, this, &ChatTab::send);
   connect(translateButton_, &QPushButton::toggled, this, [this](bool enabled) {
     if (enabled) {
