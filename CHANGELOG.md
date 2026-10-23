@@ -14,7 +14,7 @@
 
 ### Changed
 
-- The GUI menu bar now has a File menu with Exit LANChat and a Connect... action
+- The GUI menu bar now has a File menu with Exit LanChat and a Connect... action
   that opens the connection dialog.
 - GUI attachments always start on a new line. Image thumbnails appear in the
   conversation and open in a full-view chat panel with a close button when

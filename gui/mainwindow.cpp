@@ -44,7 +44,7 @@ MainWindow::MainWindow() {
   setCentralWidget(central);
 
   auto *fileMenu = menuBar()->addMenu(QStringLiteral("File"));
-  auto *exitAction = fileMenu->addAction(QStringLiteral("Exit LANChat"));
+  auto *exitAction = fileMenu->addAction(QStringLiteral("Exit LanChat"));
   auto *connectToAction =
       menuBar()->addAction(QStringLiteral("Connect..."));
   auto *settingsMenu = menuBar()->addMenu(QStringLiteral("Settings"));
