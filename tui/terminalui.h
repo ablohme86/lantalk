@@ -46,8 +46,11 @@ private:
     ChatSession *session;
     QString title;
     QList<TranscriptLine> transcript;
+    QList<ChatSession *> retiredSessions;
     bool liveTranslate = false;
     bool historyLoaded = false;
+    bool disconnected = false;
+    bool unread = false;
     QString myLanguage;
     QString peerLanguage;
   };
@@ -79,6 +82,7 @@ private:
   void acceptConnection();
   void addSession(QTcpSocket *socket, const QString &title);
   void closeConversation(int index);
+  int resumeDisconnectedConversation(int newIndex);
   void sendChatMessage(const QString &text);
   void setStatus(const QString &message);
   void updateTranslationStatus(const QString &idleMessage);

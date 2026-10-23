@@ -6,7 +6,8 @@
 
 - GUI and TUI now share per-peer chat history keyed by IP address and nickname.
   Reconnecting to the same peer restores the 20 newest earlier messages in
-  italics, followed by an `Earlier messages` divider.
+  italics, followed by an `Earlier messages` divider. Message timestamps are
+  saved with the history and shown as `[HH:mm]` in both interfaces.
 - The Windows executable now embeds the LANChat app icon as a native Windows
   resource.
 - Pushing a `vX.Y.Z` tag now builds a Windows x64 release and publishes both a
@@ -28,6 +29,13 @@
   list heading is `HOSTS ON NETWORK`. The active tab has a cyan `*`; the tab
   currently being selected has a yellow `>` marker and highlight.
 - The TUI labels outgoing messages as `You` to match the GUI.
+- GUI and TUI connection tabs now show the remote IP for IPv4-mapped IPv6
+  sockets, retain the address after disconnect, and label disconnected peers as
+  `Nickname (Disconnected)`.
+- The TUI reuses a disconnected tab when the same IP and nickname reconnect.
+  `Ctrl-S` closes the active chat tab and disconnects it.
+- Tabs with messages received in another conversation are highlighted until
+  selected. The GUI's default font size is now 11 pt.
 - Chat messages are sent with Enter; the Send button has been removed from the
   chat input row.
 - The GUI saves open chat tabs and restores them on launch. Disconnected peers

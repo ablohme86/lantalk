@@ -5,13 +5,42 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHostAddress>
 #include <QMimeDatabase>
 #include <QStandardPaths>
 #include <QTcpSocket>
 #include <QUuid>
 
+namespace {
+
+QString formatPeerAddress(const QHostAddress &address) {
+  if (address.isNull()) return {};
+  if (address.protocol() == QAbstractSocket::IPv4Protocol) {
+    return address.toString();
+  }
+  if (address.protocol() != QAbstractSocket::IPv6Protocol) {
+    return address.toString();
+  }
+
+  const auto ipv6 = address.toIPv6Address();
+  bool isIpv4Mapped = ipv6[10] == 0xff && ipv6[11] == 0xff;
+  for (int index = 0; index < 10 && isIpv4Mapped; ++index) {
+    isIpv4Mapped = ipv6[index] == 0;
+  }
+  if (!isIpv4Mapped) return address.toString();
+
+  return QStringLiteral("%1.%2.%3.%4")
+      .arg(ipv6[12])
+      .arg(ipv6[13])
+      .arg(ipv6[14])
+      .arg(ipv6[15]);
+}
+
+} // namespace
+
 ChatSession::ChatSession(QTcpSocket *socket, QObject *parent)
     : QObject(parent), socket_(socket) {
+  peerAddress_ = formatPeerAddress(socket_->peerAddress());
   outgoingFilePump_.setSingleShot(true);
   connect(&outgoingFilePump_, &QTimer::timeout, this,
           &ChatSession::sendNextFileChunk);
@@ -21,6 +50,7 @@ ChatSession::ChatSession(QTcpSocket *socket, QObject *parent)
 void ChatSession::setupSocket() {
   socket_->setParent(this);
   connect(socket_, &QTcpSocket::connected, this, [this] {
+    peerAddress_ = formatPeerAddress(socket_->peerAddress());
     if (!nickname_.isEmpty() && !handshakeComplete_) {
       sendLine(QStringLiteral("NICKNAME %1").arg(nickname_));
     }
@@ -68,6 +98,8 @@ void ChatSession::reconnectToHost(const QString &address, quint16 port) {
   }
 
   cancelOutgoingFiles();
+  const auto requestedAddress = formatPeerAddress(QHostAddress(address));
+  if (!requestedAddress.isEmpty()) peerAddress_ = requestedAddress;
   auto *oldSocket = socket_;
   disconnect(oldSocket, nullptr, this, nullptr);
   oldSocket->abort();
@@ -85,6 +117,15 @@ void ChatSession::reconnectToHost(const QString &address, quint16 port) {
   socket_ = new QTcpSocket(this);
   setupSocket();
   socket_->connectToHost(address, port);
+}
+
+void ChatSession::closeConnection() {
+  cancelOutgoingFiles();
+  if (socket_->state() == QAbstractSocket::ConnectedState) {
+    socket_->disconnectFromHost();
+  } else {
+    socket_->abort();
+  }
 }
 
 void ChatSession::notifyDisconnected() {
@@ -308,9 +349,8 @@ void ChatSession::stopLiveTranslation() {
 
 QString ChatSession::peerName() const { return peerName_; }
 QString ChatSession::peerAddress() const {
-  const auto address = socket_->peerAddress();
-  return address.protocol() == QAbstractSocket::IPv4Protocol ? address.toString()
-                                                               : QString();
+  const auto currentAddress = formatPeerAddress(socket_->peerAddress());
+  return currentAddress.isEmpty() ? peerAddress_ : currentAddress;
 }
 quint16 ChatSession::peerPort() const { return socket_->peerPort(); }
 

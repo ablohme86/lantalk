@@ -27,6 +27,13 @@ QString settingsKey(const QString &address, const QString &peerName) {
 
 } // namespace
 
+QString ChatHistory::timestampPrefix(const QDateTime &timestamp) {
+  return timestamp.isValid()
+             ? QStringLiteral("[%1] ").arg(
+                   timestamp.toLocalTime().toString(QStringLiteral("HH:mm")))
+             : QString();
+}
+
 QList<ChatHistory::Entry> ChatHistory::load(const QString &address,
                                             const QString &peerName,
                                             int limit) {
@@ -42,15 +49,18 @@ QList<ChatHistory::Entry> ChatHistory::load(const QString &address,
     const auto item = stored.at(index).toMap();
     const auto sender = item.value(QStringLiteral("sender")).toString();
     const auto message = item.value(QStringLiteral("message")).toString();
+    const auto timestamp = QDateTime::fromString(
+        item.value(QStringLiteral("timestamp")).toString(), Qt::ISODateWithMs);
     if (!sender.isEmpty() && !message.isEmpty()) {
-      entries.append({sender, message});
+      entries.append({sender, message, timestamp});
     }
   }
   return entries;
 }
 
 void ChatHistory::append(const QString &address, const QString &peerName,
-                         const QString &sender, const QString &message) {
+                         const QString &sender, const QString &message,
+                         const QDateTime &timestamp) {
   if (address.trimmed().isEmpty() || peerName.trimmed().isEmpty() ||
       sender.isEmpty() || message.isEmpty()) {
     return;
@@ -62,6 +72,8 @@ void ChatHistory::append(const QString &address, const QString &peerName,
   QVariantMap entry;
   entry.insert(QStringLiteral("sender"), sender);
   entry.insert(QStringLiteral("message"), message);
+  entry.insert(QStringLiteral("timestamp"),
+               timestamp.toString(Qt::ISODateWithMs));
   stored.append(entry);
   while (stored.size() > MaximumStoredEntries) {
     stored.removeFirst();

@@ -12,6 +12,7 @@
 #include <QUuid>
 
 class QComboBox;
+class ChatTab;
 class QEvent;
 class QSystemTrayIcon;
 class QTabWidget;
@@ -45,6 +46,7 @@ private:
   void showFromTray();
   void clearUnreadMessages();
   void noteIncomingMessage();
+  void setTabUnread(ChatTab *tab, bool unread);
   void announcePresence();
   void readDiscoveryDatagrams();
   void scanPrivateSubnets();

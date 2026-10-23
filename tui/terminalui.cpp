@@ -85,7 +85,7 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
     escapeTimer_.setSingleShot(true);
     escapeTimer_.setInterval(35);
     connect(&escapeTimer_, &QTimer::timeout, this, &TerminalUi::flushEscape);
-    status_ = QStringLiteral("Tab changes focus; arrows navigate; Enter selects or sends.");
+    status_ = QStringLiteral("Tab changes focus; arrows navigate; Enter selects or sends; Ctrl-S closes the active chat.");
     redraw();
 }
 
@@ -399,6 +399,7 @@ void TerminalUi::handleKey(const QByteArray &key)
             currentConversation_ = (currentConversation_ + delta + conversations_.size())
                                    % conversations_.size();
             selectedConversation_ = currentConversation_;
+            conversations_[currentConversation_].unread = false;
         }
     } else if (key == "\x1b[C" || key == "\x1b[D") {
         if (focus_ == Focus::Menu) {
@@ -423,6 +424,7 @@ void TerminalUi::handleKey(const QByteArray &key)
             currentConversation_ = (currentConversation_ + delta + conversations_.size())
                                    % conversations_.size();
             selectedConversation_ = currentConversation_;
+            conversations_[currentConversation_].unread = false;
         }
     } else if (key == "\r" || key == "\n") {
         if (focus_ == Focus::Hosts) {
@@ -436,6 +438,7 @@ void TerminalUi::handleKey(const QByteArray &key)
             if (selectedConversation_ >= 0 &&
                 selectedConversation_ < conversations_.size()) {
                 currentConversation_ = selectedConversation_;
+                conversations_[currentConversation_].unread = false;
                 focus_ = Focus::Chat;
                 status_ = QStringLiteral("Active tab: %1")
                               .arg(conversationTitle(
@@ -465,6 +468,13 @@ void TerminalUi::handleKey(const QByteArray &key)
         }
     } else if (key == "\x7f" || key == "\b") {
         if (focus_ == Focus::Chat && !input_.isEmpty()) input_.chop(1);
+    } else if (key == "\x13") {
+        if (currentConversation_ >= 0 &&
+            currentConversation_ < conversations_.size()) {
+            closeConversation(currentConversation_);
+        } else {
+            status_ = QStringLiteral("No chat tab to close.");
+        }
     } else if (key == "\x03") {
         QCoreApplication::quit();
         return;
@@ -481,7 +491,7 @@ void TerminalUi::handleCommand(const QString &command)
     if (name == QStringLiteral("/help")) {
         print(QStringLiteral("/hosts, /connect <host|number> [port], /tabs, /use <tab>, /close [tab], "
                              "/nick <name>, /translate <my language> | <peer language>, "
-                             "/stoptranslate, /quit. In the full-screen UI use Tab and arrows."));
+                             "/stoptranslate, /quit. In the full-screen UI use Tab and arrows; Ctrl-S closes the active chat."));
     } else if (name == QStringLiteral("/hosts")) {
         focus_ = Focus::Hosts;
         printHosts();
@@ -519,6 +529,7 @@ void TerminalUi::handleCommand(const QString &command)
         }
         currentConversation_ = index;
         selectedConversation_ = index;
+        conversations_[index].unread = false;
         focus_ = Focus::Chat;
         print(QStringLiteral("Active tab: %1").arg(conversationTitle(conversations_.at(index))));
     } else if (name == QStringLiteral("/close")) {
@@ -746,23 +757,30 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
     selectedConversation_ = index;
     focus_ = Focus::Chat;
     connect(session, &ChatSession::peerIdentified, this, [this, session] {
-        for (int index = 0; index < conversations_.size(); ++index) if (conversations_[index].session == session) {
-            conversations_[index].title = conversationTitle(conversations_[index]);
-            loadConversationHistory(index);
-            redraw();
-            return;
-        }
+        const int newIndex = conversationIndex(session);
+        if (newIndex < 0) return;
+        const int index = resumeDisconnectedConversation(newIndex);
+        conversations_[index].disconnected = false;
+        conversations_[index].title = conversationTitle(conversations_[index]);
+        loadConversationHistory(index);
+        redraw();
     });
     connect(session, &ChatSession::messageReceived, this,
             [this, session](const QString &message, const QString &) {
                 const int index = conversationIndex(session);
                 if (index < 0) return;
+                const auto timestamp = QDateTime::currentDateTime();
+                if (index != currentConversation_) {
+                    conversations_[index].unread = true;
+                }
                 ChatHistory::append(session->peerAddress(), session->peerName(),
-                                    session->peerName(), message);
+                                    session->peerName(), message, timestamp);
                 const auto &conversation = conversations_.at(index);
                 if (!conversation.liveTranslate) {
                     appendTranscript(index,
-                                     QStringLiteral("%1: %2").arg(session->peerName(), message));
+                                     ChatHistory::timestampPrefix(timestamp) +
+                                         QStringLiteral("%1: %2")
+                                             .arg(session->peerName(), message));
                     return;
                 }
 
@@ -773,14 +791,15 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
                 ++pendingIncomingTranslations_;
                 setStatus(QStringLiteral("Translating incoming message... Stand by."));
                 connect(translator, &OllamaClient::translated, this,
-                        [this, safeSession, translator](const QString &translation,
-                                                        const QString &) {
+                        [this, safeSession, translator, timestamp](const QString &translation,
+                                                                   const QString &) {
                             if (safeSession) {
                                 const int conversation = conversationIndex(safeSession);
                                 if (conversation >= 0) {
                                     appendTranscript(conversation,
-                                                     QStringLiteral("%1: %2")
-                                                         .arg(safeSession->peerName(), translation));
+                                                     ChatHistory::timestampPrefix(timestamp) +
+                                                         QStringLiteral("%1: %2")
+                                                             .arg(safeSession->peerName(), translation));
                                 }
                             }
                             --pendingIncomingTranslations_;
@@ -790,14 +809,15 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
                             translator->deleteLater();
                         });
                 connect(translator, &OllamaClient::failed, this,
-                        [this, safeSession, translator, message](const QString &error,
-                                                                 const QString &) {
+                        [this, safeSession, translator, message, timestamp](const QString &error,
+                                                                            const QString &) {
                             if (safeSession) {
                                 const int conversation = conversationIndex(safeSession);
                                 if (conversation >= 0) {
                                     appendTranscript(conversation,
-                                                     QStringLiteral("%1: %2")
-                                                         .arg(safeSession->peerName(), message));
+                                                     ChatHistory::timestampPrefix(timestamp) +
+                                                         QStringLiteral("%1: %2")
+                                                             .arg(safeSession->peerName(), message));
                                 }
                             }
                             --pendingIncomingTranslations_;
@@ -839,11 +859,17 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
         const int index = std::find_if(conversations_.cbegin(), conversations_.cend(),
                                        [session](const Conversation &item) { return item.session == session; })
                           - conversations_.cbegin();
-        if (index < conversations_.size()) appendTranscript(index, QStringLiteral("* %1 sent %2 (%3)").arg(session->peerName(), name, path));
+        if (index < conversations_.size()) {
+            if (index != currentConversation_) conversations_[index].unread = true;
+            appendTranscript(index, QStringLiteral("* %1 sent %2 (%3)").arg(session->peerName(), name, path));
+        }
     });
     connect(session, &ChatSession::disconnected, this, [this, session] {
         const int index = conversationIndex(session);
-        if (index >= 0) appendTranscript(index, QStringLiteral("* Disconnected."));
+        if (index >= 0) {
+            conversations_[index].disconnected = true;
+            appendTranscript(index, QStringLiteral("* Disconnected."));
+        }
         setStatus(QStringLiteral("Disconnected."));
     });
     session->beginHandshake(nickname());
@@ -856,11 +882,19 @@ void TerminalUi::closeConversation(int index)
         print(QStringLiteral("No such tab."));
         return;
     }
-    conversations_.takeAt(index).session->deleteLater();
+    const auto conversation = conversations_.takeAt(index);
+    conversation.session->closeConnection();
+    conversation.session->deleteLater();
+    for (auto *retiredSession : conversation.retiredSessions) {
+        retiredSession->closeConnection();
+        retiredSession->deleteLater();
+    }
     if (conversations_.isEmpty()) currentConversation_ = -1;
     else if (currentConversation_ >= conversations_.size()) currentConversation_ = conversations_.size() - 1;
     else if (index < currentConversation_) --currentConversation_;
     selectedConversation_ = currentConversation_;
+    if (currentConversation_ >= 0)
+        conversations_[currentConversation_].unread = false;
     print(QStringLiteral("Closed tab %1.").arg(index + 1));
 }
 
@@ -872,11 +906,14 @@ void TerminalUi::sendChatMessage(const QString &text)
     }
     auto &conversation = conversations_[currentConversation_];
     if (!conversation.liveTranslate) {
+        const auto timestamp = QDateTime::currentDateTime();
         conversation.session->sendMessage(text);
-        appendTranscript(currentConversation_, QStringLiteral("You: %1").arg(text));
+        appendTranscript(currentConversation_,
+                         ChatHistory::timestampPrefix(timestamp) +
+                             QStringLiteral("You: %1").arg(text));
         ChatHistory::append(conversation.session->peerAddress(),
                             conversation.session->peerName(),
-                            QStringLiteral("You"), text);
+                            QStringLiteral("You"), text, timestamp);
         return;
     }
 
@@ -890,12 +927,15 @@ void TerminalUi::sendChatMessage(const QString &text)
                 if (session) {
                     const int index = conversationIndex(session);
                     if (index >= 0) {
+                        const auto timestamp = QDateTime::currentDateTime();
                         session->sendMessage(translation, originalMessage);
                         appendTranscript(index,
-                                         QStringLiteral("You: %1").arg(originalMessage));
+                                         ChatHistory::timestampPrefix(timestamp) +
+                                             QStringLiteral("You: %1")
+                                                 .arg(originalMessage));
                         ChatHistory::append(
                             session->peerAddress(), session->peerName(),
-                            QStringLiteral("You"), originalMessage);
+                            QStringLiteral("You"), originalMessage, timestamp);
                     }
                 }
                 --pendingOutgoingTranslations_;
@@ -942,6 +982,46 @@ int TerminalUi::conversationIndex(ChatSession *session) const
     return found == conversations_.cend() ? -1 : int(found - conversations_.cbegin());
 }
 
+int TerminalUi::resumeDisconnectedConversation(int newIndex)
+{
+    if (newIndex < 0 || newIndex >= conversations_.size()) return newIndex;
+
+    auto *newSession = conversations_[newIndex].session;
+    const auto newAddress = newSession->peerAddress();
+    const auto newName = newSession->peerName()
+                             .normalized(QString::NormalizationForm_KC)
+                             .simplified()
+                             .toCaseFolded();
+    if (newAddress.isEmpty() || newName.isEmpty()) return newIndex;
+
+    for (int index = 0; index < conversations_.size(); ++index) {
+        if (index == newIndex || !conversations_[index].disconnected) continue;
+        const auto oldAddress = conversations_[index].session->peerAddress();
+        const auto oldName = conversations_[index].session->peerName()
+                                 .normalized(QString::NormalizationForm_KC)
+                                 .simplified()
+                                 .toCaseFolded();
+        if (oldAddress.compare(newAddress, Qt::CaseInsensitive) != 0 ||
+            oldName != newName) {
+            continue;
+        }
+
+        auto &conversation = conversations_[index];
+        conversation.retiredSessions.append(conversation.session);
+        conversation.session = newSession;
+        conversation.disconnected = false;
+        conversation.unread = false;
+        conversation.title = conversationTitle(conversation);
+        conversations_.removeAt(newIndex);
+        currentConversation_ = index;
+        selectedConversation_ = index;
+        focus_ = Focus::Chat;
+        return index;
+    }
+
+    return newIndex;
+}
+
 QList<TerminalUi::DiscoveredHost> TerminalUi::sortedHosts() const
 {
     auto hosts = discoveredHosts_.values();
@@ -973,7 +1053,8 @@ void TerminalUi::loadConversationHistory(int index)
                                            conversation.session->peerName(), 20);
     for (const auto &entry : entries) {
         conversation.transcript.append(
-            {sanitize(QStringLiteral("%1: %2").arg(entry.sender, entry.message)),
+            {sanitize(ChatHistory::timestampPrefix(entry.timestamp) +
+                      QStringLiteral("%1: %2").arg(entry.sender, entry.message)),
              true, false});
     }
     if (!entries.isEmpty()) {
@@ -1108,6 +1189,7 @@ void TerminalUi::redraw()
         QString right;
         QList<QPair<int, int>> activeTabRanges;
         QList<QPair<int, int>> selectedTabRanges;
+        QList<QPair<int, int>> unreadTabRanges;
         if (row == 0) left = QStringLiteral("├── HOSTS ON NETWORK %1").arg(
             QString(std::max(0, sidebar - displayWidth(QStringLiteral("├── HOSTS ON NETWORK "))), u'─'));
         else if (row - 1 < hosts.size()) {
@@ -1124,6 +1206,15 @@ void TerminalUi::redraw()
                     const bool active = tab == currentConversation_;
                     const bool selected = focus_ == Focus::Conversations &&
                                           tab == selectedConversation_;
+                    const bool unread = conversations_.at(tab).unread;
+                    if (unread) {
+                        const int unreadStart = right.size();
+                        right += u'!';
+                        unreadTabRanges.append({unreadStart, right.size()});
+                    } else {
+                        right += u' ';
+                    }
+                    right += u' ';
                     if (active) {
                         const int markerStart = right.size();
                         right += u'*';
@@ -1146,6 +1237,8 @@ void TerminalUi::redraw()
                     const auto titleRange = qMakePair(titleStart, right.size());
                     if (active) activeTabRanges.append(titleRange);
                     if (selected) selectedTabRanges.append(titleRange);
+                    if (unread && !selected && !active)
+                        unreadTabRanges.append(titleRange);
                 }
             }
             right = elide(right, mainWidth - 1);
@@ -1182,11 +1275,14 @@ void TerminalUi::redraw()
                                       ? 2
                                   : rangeContains(activeTabRanges, position)
                                       ? 1
+                                  : rangeContains(unreadTabRanges, position)
+                                      ? 3
                                       : 0;
                 if (style != previousStyle) {
                     styledHeader += QStringLiteral("\x1b[0m");
                     styledHeader += style == 2   ? QStringLiteral("\x1b[30;43m")
                                     : style == 1 ? QStringLiteral("\x1b[1;96m")
+                                    : style == 3 ? QStringLiteral("\x1b[1;91m")
                                                  : QStringLiteral("\x1b[36m");
                     previousStyle = style;
                 }
@@ -1278,6 +1374,12 @@ QString TerminalUi::conversationTitle(const Conversation &conversation) const
 {
     const QString peer = conversation.session->peerName();
     const QString address = conversation.session->peerAddress();
-    return peer.isEmpty() ? (address.isEmpty() ? conversation.title : address)
-                          : (address.isEmpty() ? peer : QStringLiteral("%1 (%2)").arg(peer, address));
+    const QString title = peer.isEmpty()
+                              ? (address.isEmpty() ? conversation.title : address)
+                              : (address.isEmpty()
+                                     ? peer
+                                     : QStringLiteral("%1 (%2)").arg(peer, address));
+    return conversation.disconnected && !peer.isEmpty()
+               ? QStringLiteral("%1 (Disconnected)").arg(peer)
+               : title;
 }

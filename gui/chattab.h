@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QDateTime>
 #include <QList>
 #include <QTextCursor>
 #include <QWidget>
@@ -56,7 +57,7 @@ private:
       const QString &sender, const QString &message,
       const QString &hoverText = {},
       const QString &hoverLabel = QStringLiteral("Original"),
-      bool historical = false);
+      bool historical = false, const QDateTime &timestamp = {});
   void loadConversationHistory();
   void appendHistorySeparator();
   void translatePendingIncomingMessages();
@@ -83,8 +84,10 @@ private:
   QPushButton *translateButton_;
   QTimer *reconnectTimer_;
   QString reconnectAddress_;
+  QString lastPeerName_;
   quint16 reconnectPort_ = 0;
   bool connected_ = false;
+  bool hasPeerIdentity_ = false;
   bool historyLoaded_ = false;
   OllamaClient outgoingTranslator_;
   OllamaClient incomingTranslator_;

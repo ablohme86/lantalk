@@ -151,6 +151,8 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(session_, &ChatSession::statusChanged, status_, &QLabel::setText);
   connect(session_, &ChatSession::peerIdentified, this,
           [this](const QString &name) {
+            lastPeerName_ = name;
+            hasPeerIdentity_ = true;
             if (!historyLoaded_) {
               historyLoaded_ = true;
               loadConversationHistory();
@@ -201,6 +203,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       session_, &ChatSession::fileReceived, this,
       [this](const QString &name, const QString &path, const QString &mime) {
         appendFile(session_->peerName(), name, path, mime, true);
+        emit incomingMessageReceived();
       });
   connect(session_, &ChatSession::fileSendProgressChanged, this,
           [this](int percent) {
@@ -267,6 +270,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       appendSystemMessage(QStringLiteral("Disconnected from %1").arg(peer));
     }
     connected_ = false;
+    if (hasPeerIdentity_) emit titleChanged();
     liveTranslate_ = false;
     {
       const QSignalBlocker blocker(translateButton_);
@@ -302,8 +306,12 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
 }
 
 QString ChatTab::title() const {
-  const auto peer = session_->peerName();
+  const auto currentPeer = session_->peerName();
+  const auto peer = currentPeer.isEmpty() ? lastPeerName_ : currentPeer;
   const auto address = session_->peerAddress();
+  if (hasPeerIdentity_ && !connected_) {
+    return QStringLiteral("%1 (Disconnected)").arg(peer);
+  }
   if (peer.isEmpty()) {
     return address.isEmpty() ? QStringLiteral("Unknown host") : address;
   }
@@ -388,10 +396,13 @@ void ChatTab::send() {
 }
 
 void ChatTab::received(const QString &message, const QString &originalMessage) {
+  const auto timestamp = QDateTime::currentDateTime();
   const auto cursor = appendMessage(session_->peerName(), message,
-                                    originalMessage);
+                                    originalMessage,
+                                    QStringLiteral("Original"), false,
+                                    timestamp);
   ChatHistory::append(session_->peerAddress(), session_->peerName(),
-                      session_->peerName(), message);
+                      session_->peerName(), message, timestamp);
   const int index = incomingMessages_.size();
   incomingMessages_.append(
       {message, cursor, !originalMessage.isEmpty(), false});
@@ -425,11 +436,12 @@ void ChatTab::outgoingTranslationFinished(const QString &translation,
                                           const QString &) {
   outgoingPending_ = false;
   clearOutgoingTranslationStatus();
+  const auto timestamp = QDateTime::currentDateTime();
   session_->sendMessage(translation, pendingOriginal_);
   appendMessage(QStringLiteral("You"), pendingOriginal_, translation,
-                QStringLiteral("Sent translation"));
+                QStringLiteral("Sent translation"), false, timestamp);
   ChatHistory::append(session_->peerAddress(), session_->peerName(),
-                      QStringLiteral("You"), pendingOriginal_);
+                      QStringLiteral("You"), pendingOriginal_, timestamp);
   pendingOriginal_.clear();
   input_->setFocus(Qt::OtherFocusReason);
 }
@@ -440,10 +452,12 @@ void ChatTab::incomingTranslationFinished(const QString &translation,
 }
 
 void ChatTab::sendText(const QString &text) {
+  const auto timestamp = QDateTime::currentDateTime();
   session_->sendMessage(text);
-  appendMessage(QStringLiteral("You"), text);
+  appendMessage(QStringLiteral("You"), text, {}, QStringLiteral("Original"),
+                false, timestamp);
   ChatHistory::append(session_->peerAddress(), session_->peerName(),
-                      QStringLiteral("You"), text);
+                      QStringLiteral("You"), text, timestamp);
   input_->setFocus(Qt::OtherFocusReason);
 }
 
@@ -466,9 +480,17 @@ QTextCursor ChatTab::appendMessage(const QString &sender,
                                    const QString &message,
                                    const QString &hoverText,
                                    const QString &hoverLabel,
-                                   bool historical) {
+                                   bool historical,
+                                   const QDateTime &timestamp) {
   auto cursor = log_->textCursor();
   cursor.movePosition(QTextCursor::End);
+  const auto timestampText = ChatHistory::timestampPrefix(timestamp);
+  if (!timestampText.isEmpty()) {
+    QTextCharFormat timestampFormat;
+    timestampFormat.setFontItalic(historical);
+    timestampFormat.setForeground(QColor(150, 160, 168));
+    cursor.insertText(timestampText, timestampFormat);
+  }
   QTextCharFormat senderFormat;
   senderFormat.setFontWeight(QFont::Bold);
   senderFormat.setFontItalic(historical);
@@ -498,7 +520,7 @@ void ChatTab::loadConversationHistory() {
 
   for (const auto &entry : entries) {
     appendMessage(entry.sender, entry.message, {},
-                  QStringLiteral("Original"), true);
+                  QStringLiteral("Original"), true, entry.timestamp);
   }
   appendHistorySeparator();
 }

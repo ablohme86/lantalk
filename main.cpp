@@ -137,7 +137,7 @@ int main(int argc, char *argv[]) {
   auto font = application.font();
   const int configuredFontSize =
       QSettings()
-          .value(QStringLiteral("appearance/fontSize"), font.pointSize())
+          .value(QStringLiteral("appearance/fontSize"), 11)
           .toInt();
   if (configuredFontSize >= 8 && configuredFontSize <= 32) {
     font.setPointSize(configuredFontSize);

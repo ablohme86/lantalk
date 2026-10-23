@@ -10,6 +10,7 @@
 #include <QAction>
 #include <QApplication>
 #include <QComboBox>
+#include <QColor>
 #include <QEvent>
 #include <QFont>
 #include <QGuiApplication>
@@ -22,6 +23,7 @@
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QSystemTrayIcon>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QTcpSocket>
 #include <QVBoxLayout>
@@ -72,6 +74,11 @@ MainWindow::MainWindow() {
     tab->deleteLater();
     persistOpenConnections();
   });
+  connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+    if (auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index))) {
+      setTabUnread(tab, false);
+    }
+  });
   promptForNickname();
   startListening();
   connect(&server_, &QTcpServer::newConnection, this,
@@ -98,7 +105,7 @@ void MainWindow::showFontSizeDialog() {
   const auto currentFont = QApplication::font();
   const int currentSize = currentFont.pointSize() > 0
                               ? currentFont.pointSize()
-                              : 10;
+                              : 11;
   bool accepted = false;
   const int fontSize = QInputDialog::getInt(
       this, QStringLiteral("Font Size"), QStringLiteral("Font size (pt):"),
@@ -183,6 +190,13 @@ void MainWindow::noteIncomingMessage() {
   }
   ++unreadMessageCount_;
   updateTrayIcon();
+}
+
+void MainWindow::setTabUnread(ChatTab *tab, bool unread) {
+  const int index = tabs_->indexOf(tab);
+  if (index < 0) return;
+  tabs_->tabBar()->setTabTextColor(
+      index, unread ? QColor(QStringLiteral("#ffbf47")) : QColor());
 }
 
 void MainWindow::connectToHost() {
@@ -479,7 +493,10 @@ void MainWindow::addSession(QTcpSocket *socket, const QString &initialTitle,
   const auto index = tabs_->addTab(tab, initialTitle);
   tabs_->setCurrentIndex(index);
   connect(tab, &ChatTab::incomingMessageReceived, this,
-          [this] { noteIncomingMessage(); });
+          [this, tab] {
+            if (tabs_->currentWidget() != tab) setTabUnread(tab, true);
+            noteIncomingMessage();
+          });
   connect(tab, &ChatTab::titleChanged, this, [this, tab] {
     const auto tabIndex = tabs_->indexOf(tab);
     if (tabIndex >= 0) {

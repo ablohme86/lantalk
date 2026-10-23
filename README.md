@@ -7,6 +7,11 @@ The desktop app includes a custom chat icon and a system tray icon that shows
 unread messages received while LANChat is in the background. The GUI remembers
 open chat tabs across restarts and retries disconnected peers every 10 seconds
 while their tab remains open.
+Connection tabs show each peer's IP address while connected and use
+`Nickname (Disconnected)` after the peer disconnects.
+Messages show local `[HH:mm]` timestamps. Tabs highlight when another
+conversation receives a message and clear the highlight when selected.
+The GUI starts with an 11 pt font; change it under Settings → Font Size.
 
 The app automatically selects the ANSI terminal interface when launched from
 an interactive terminal. It uses the desktop GUI otherwise. Pass `--tui` to
@@ -28,6 +33,8 @@ top menu, left/right selects `Chat` or `Settings` before you press `Enter`.
 GUI and TUI share chat history for peers with the same IP address and nickname.
 When a conversation is reopened, its 20 newest earlier messages appear in
 italics above an `Earlier messages` divider.
+In the TUI, a reconnect from the same IP and nickname resumes the existing
+disconnected tab; press `Ctrl-S` to close and disconnect the active chat.
 Press `Alt-C` for the Chat menu (connect, close the active chat, or quit) and
 `Alt-S` for Settings (nickname, Ollama URL/model, and listening port). Menus
 and their confirmations use keyboard-friendly ASCII dialogs; `Esc` cancels.

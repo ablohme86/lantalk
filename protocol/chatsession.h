@@ -19,6 +19,7 @@ public:
   ~ChatSession() override;
   void beginHandshake(const QString &nickname);
   void reconnectToHost(const QString &address, quint16 port);
+  void closeConnection();
   void sendMessage(const QString &message, const QString &originalMessage = {});
   bool sendFile(const QString &filePath);
   void requestLiveTranslation(const QString &sourceLanguage,
@@ -67,6 +68,7 @@ private:
   QByteArray buffer_;
   QString nickname_;
   QString peerName_;
+  QString peerAddress_;
   bool handshakeComplete_ = false;
   bool translationActive_ = false;
   bool peerTranslationActive_ = false;
