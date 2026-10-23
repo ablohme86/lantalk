@@ -143,7 +143,30 @@ jobs:
         with:
           ref: ${{ needs.version.outputs.tag }}
 
+      # Use the Qt already installed on the runner when there is one: the
+      # LANTALK_QT_DIR environment variable, C:\Qt\<QT_VERSION>\msvc2022_64,
+      # or the newest C:\Qt\6.*\msvc2022_64. Only otherwise download it.
+      - name: Find installed Qt
+        id: qt
+        shell: pwsh
+        run: |
+          $candidates = @()
+          if ($env:LANTALK_QT_DIR) { $candidates += $env:LANTALK_QT_DIR }
+          $candidates += "C:\Qt\$env:QT_VERSION\msvc2022_64"
+          $candidates += Get-ChildItem 'C:\Qt\6.*\msvc2022_64' -Directory -ErrorAction SilentlyContinue |
+            Sort-Object { try { [version]$_.Parent.Name } catch { [version]'0.0' } } -Descending | ForEach-Object FullName
+          $qt = $candidates | Where-Object { Test-Path (Join-Path $_ 'lib\cmake\Qt6\Qt6Config.cmake') } | Select-Object -First 1
+          if ($qt) {
+            Write-Host "Using the installed Qt in $qt"
+            Add-Content -Path $env:GITHUB_ENV -Value "QT_ROOT_DIR=$qt"
+            Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $qt 'bin')
+            Add-Content -Path $env:GITHUB_OUTPUT -Value 'found=true'
+          } else {
+            Write-Host "No installed MSVC Qt found; downloading Qt $env:QT_VERSION."
+          }
+
       - name: Install Qt
+        if: steps.qt.outputs.found != 'true'
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ env.QT_VERSION }}
