@@ -76,9 +76,15 @@ if (-not (Test-Path "C:\Program Files\PowerShell\7\pwsh.exe")) {
 Step "Scripts allowed (Windows 11 Home forbids them; GitHub's own runners allow them)"
 # install-qt-action runs PowerShell scripts of its own.
 # RemoteSigned: local scripts run, downloaded ones must be signed.
-Set-ExecutionPolicy -Scope LocalMachine RemoteSigned -Force
+# PowerShell reports an error when the session's own -Scope Process Bypass
+# (from the instructions above) outranks the new setting; it is saved anyway.
+try {
+    Set-ExecutionPolicy -Scope LocalMachine RemoteSigned -Force
+} catch {
+    if ($_.FullyQualifiedErrorId -notlike "ExecutionPolicyOverride*") { throw }
+}
 if (Test-Path "C:\Program Files\PowerShell\7\pwsh.exe") {
-    & "C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -Command "Set-ExecutionPolicy -Scope LocalMachine RemoteSigned -Force"
+    & "C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -Command "try { Set-ExecutionPolicy -Scope LocalMachine RemoteSigned -Force } catch { if (`$_.FullyQualifiedErrorId -notlike 'ExecutionPolicyOverride*') { throw } }"
 }
 
 Step "Long paths, for the build tree's deep folders"
