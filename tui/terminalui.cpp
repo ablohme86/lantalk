@@ -1106,6 +1106,8 @@ void TerminalUi::redraw()
     for (int row = 0; row < contentRows; ++row) {
         QString left = QStringLiteral("│");
         QString right;
+        QList<QPair<int, int>> activeTabRanges;
+        QList<QPair<int, int>> selectedTabRanges;
         if (row == 0) left = QStringLiteral("├── HOSTS ON NETWORK %1").arg(
             QString(std::max(0, sidebar - displayWidth(QStringLiteral("├── HOSTS ON NETWORK "))), u'─'));
         else if (row - 1 < hosts.size()) {
@@ -1116,19 +1118,35 @@ void TerminalUi::redraw()
             if (conversations_.isEmpty()) {
                 right = QStringLiteral("── CHAT");
             } else {
-                QStringList tabs;
+                right = QStringLiteral("── ");
                 for (int tab = 0; tab < conversations_.size(); ++tab) {
-                    const QString marker =
-                        focus_ == Focus::Conversations &&
-                                tab == selectedConversation_
-                            ? QStringLiteral("> ")
-                            : tab == currentConversation_ ? QStringLiteral("* ")
-                                                          : QStringLiteral("  ");
-                    tabs.append(QStringLiteral("%1[%2]")
-                                    .arg(marker,
-                                         conversationTitle(conversations_.at(tab))));
+                    if (tab > 0) right += u' ';
+                    const bool active = tab == currentConversation_;
+                    const bool selected = focus_ == Focus::Conversations &&
+                                          tab == selectedConversation_;
+                    if (active) {
+                        const int markerStart = right.size();
+                        right += u'*';
+                        activeTabRanges.append({markerStart, right.size()});
+                    } else {
+                        right += u' ';
+                    }
+                    right += u' ';
+                    if (selected) {
+                        const int markerStart = right.size();
+                        right += u'>';
+                        selectedTabRanges.append({markerStart, right.size()});
+                    } else {
+                        right += u' ';
+                    }
+                    right += u' ';
+                    const int titleStart = right.size();
+                    right += QStringLiteral("[%1]").arg(
+                        conversationTitle(conversations_.at(tab)));
+                    const auto titleRange = qMakePair(titleStart, right.size());
+                    if (active) activeTabRanges.append(titleRange);
+                    if (selected) selectedTabRanges.append(titleRange);
                 }
-                right = QStringLiteral("── %1").arg(tabs.join(u' '));
             }
             right = elide(right, mainWidth - 1);
             right += QString(std::max(0, mainWidth - 1 - displayWidth(right)), u'─');
@@ -1149,10 +1167,32 @@ void TerminalUi::redraw()
                        << "\x1b[1;34m" << (row == 0 ? "┬" : "│") << "\x1b[0m";
         if (row == 0) {
             const QString header = elide(right, mainWidth - 1);
-            const auto headerStyle = focus_ == Focus::Conversations
-                                         ? "\x1b[30;43m"
-                                         : "\x1b[36m";
-            terminalOutput << headerStyle << header << "\x1b[0m"
+            const auto rangeContains = [](const QList<QPair<int, int>> &ranges,
+                                          int position) {
+                return std::any_of(ranges.cbegin(), ranges.cend(),
+                                   [position](const auto &range) {
+                                       return position >= range.first &&
+                                              position < range.second;
+                                   });
+            };
+            QString styledHeader;
+            int previousStyle = -1;
+            for (int position = 0; position < header.size(); ++position) {
+                const int style = rangeContains(selectedTabRanges, position)
+                                      ? 2
+                                  : rangeContains(activeTabRanges, position)
+                                      ? 1
+                                      : 0;
+                if (style != previousStyle) {
+                    styledHeader += QStringLiteral("\x1b[0m");
+                    styledHeader += style == 2   ? QStringLiteral("\x1b[30;43m")
+                                    : style == 1 ? QStringLiteral("\x1b[1;96m")
+                                                 : QStringLiteral("\x1b[36m");
+                    previousStyle = style;
+                }
+                styledHeader += header.at(position);
+            }
+            terminalOutput << "\x1b[36m" << styledHeader << "\x1b[0m"
                            << QString(std::max(0, mainWidth - 1 - displayWidth(header)), u' ')
                            << "\x1b[1;34m│\x1b[0m\x1b[K\n";
         } else {
