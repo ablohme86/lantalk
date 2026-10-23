@@ -34,6 +34,12 @@
 
 ### Changed
 
+- The TUI menu bar now looks like MS-DOS Edit: a blue bar with underlined
+  accelerator letters and drop-down menus with keyboard shortcuts. `Down`
+  opens the focused menu, and accelerator letters pick menus and items.
+- The TUI input stays usable while the active conversation is disconnected,
+  so slash commands such as `/connect` work; messages are not sent and the
+  reconnect prompt appears in the status line instead.
 - The GUI opens a tab for an incoming connection only after its handshake, so
   duplicate or aborted connections no longer leave stray tabs.
 

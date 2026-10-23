@@ -74,6 +74,7 @@ private:
   void flushEscape();
   void handleKey(const QByteArray &key);
   void handleCommand(const QString &command);
+  void openTopMenu(Menu menu);
   void activateMenuItem();
   void openDialog(Dialog dialog, const QString &title, const QString &prompt,
                   const QString &value = {});
@@ -102,6 +103,7 @@ private:
   void writeLine(const QString &text, int width) const;
   QString boxedLine(const QString &text, int width) const;
   void drawDialog() const;
+  void drawMenu(int column) const;
   void print(const QString &text) const;
   void printPrompt();
   void printHosts() const;

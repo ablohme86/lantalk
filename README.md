@@ -9,8 +9,10 @@ open chat tabs across restarts and retries disconnected peers every 10 seconds
 while their tab remains open.
 Connection tabs show each peer's IP address while connected and use
 `Nickname (Disconnected)` after the peer disconnects.
-Disconnected chat inputs show an italic reconnect prompt and reject new
-messages until the connection returns.
+Disconnected conversations reject new messages until the connection returns.
+The GUI disables the input and shows an italic reconnect prompt; the TUI keeps
+its input usable for slash commands such as `/connect` and shows the reconnect
+prompt in the status line above it.
 Messages show local `[HH:mm]` timestamps. Tabs highlight when another
 conversation receives a message and clear the highlight when selected.
 The GUI starts with an 11 pt font; change it under Settings → Font Size.
@@ -55,9 +57,11 @@ When a conversation is reopened, its 20 newest earlier messages appear in
 italics above an `Earlier messages` divider.
 In the TUI, a reconnect from the same IP and nickname resumes the existing
 disconnected tab; press `Ctrl-W` to close and disconnect the active chat.
-Press `Alt-C` for the Chat menu (connect, close the active chat, or quit) and
-`Alt-S` for Settings (nickname, Ollama URL/model, and listening port). Menus
-and their confirmations use keyboard-friendly ASCII dialogs; `Esc` cancels.
+The TUI has an MS-DOS Edit style menu bar. Press `Alt-C` for the Chat menu
+(connect, close the active chat, or quit) and `Alt-S` for Settings (nickname,
+Ollama URL/model, and listening port). Menus drop down below the bar; use the
+arrow keys or the underlined letter to pick an item. Menu confirmations use
+keyboard-friendly ASCII dialogs; `Esc` cancels.
 Typing and sending chat messages works while the chat area has focus. The
 existing slash commands remain available (`/help`, `/hosts`, `/connect`,
 `/tabs`, `/use`, `/close`, `/nick`, `/translate`, `/stoptranslate`, and

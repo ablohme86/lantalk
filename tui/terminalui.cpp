@@ -57,6 +57,57 @@ int displayWidth(const QString &text)
     }
     return width;
 }
+
+// Top menu entries; '&' marks the accelerator letter, as in MS-DOS Edit.
+struct MenuEntry {
+    QString label;
+    QString shortcut;
+};
+
+const QStringList &menuTitles()
+{
+    static const QStringList titles{QStringLiteral("&Chat"), QStringLiteral("&Settings")};
+    return titles;
+}
+
+QList<MenuEntry> menuEntries(int menu)
+{
+    if (menu == 0) {
+        return {{QStringLiteral("&Connect To..."), {}},
+                {QStringLiteral("C&lose Chat"), QStringLiteral("Ctrl+W")},
+                {QStringLiteral("&Quit"), QStringLiteral("Ctrl+C")}};
+    }
+    return {{QStringLiteral("&Nickname..."), {}},
+            {QStringLiteral("&Ollama Settings..."), {}},
+            {QStringLiteral("&Listening Port..."), {}},
+            {QStringLiteral("&Back"), QStringLiteral("Esc")}};
+}
+
+QChar accelerator(const QString &label)
+{
+    const int marker = label.indexOf(u'&');
+    return marker >= 0 && marker + 1 < label.size() ? label.at(marker + 1).toLower() : QChar();
+}
+
+int labelWidth(const QString &label)
+{
+    return label.size() - (label.contains(u'&') ? 1 : 0);
+}
+
+// Underlines the accelerator without disturbing the surrounding colors.
+QString styledLabel(const QString &label)
+{
+    const int marker = label.indexOf(u'&');
+    if (marker < 0 || marker + 1 >= label.size()) return label;
+    return label.left(marker) + QStringLiteral("\x1b[4m") + label.at(marker + 1)
+           + QStringLiteral("\x1b[24m") + label.mid(marker + 2);
+}
+
+const auto ReconnectHint = QStringLiteral("Re-connect to this host to start chatting");
+
+const auto MenuBarStyle = QStringLiteral("\x1b[0;97;44m");
+const auto MenuHighlightStyle = QStringLiteral("\x1b[0;97;42m");
+const auto MenuBoxStyle = QStringLiteral("\x1b[0;97;100m");
 } // namespace
 
 TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
@@ -287,8 +338,7 @@ void TerminalUi::handleInput()
             handleCommand(text);
         } else if (!text.isEmpty()) {
             if (currentConversationDisconnected()) {
-                setStatus(QStringLiteral(
-                    "Re-connect to this host to start chatting"));
+                setStatus(ReconnectHint);
             } else {
                 sendChatMessage(text);
             }
@@ -346,11 +396,7 @@ void TerminalUi::flushEscape()
 void TerminalUi::handleKey(const QByteArray &key)
 {
     if (key == QByteArray("\x1b") + 'c' || key == QByteArray("\x1b") + 's') {
-        openMenu_ = key == QByteArray("\x1b") + 'c' ? Menu::Chat : Menu::Settings;
-        selectedMenu_ = openMenu_ == Menu::Chat ? 0 : 1;
-        selectedAction_ = 0;
-        focus_ = Focus::Menu;
-        status_ = openMenu_ == Menu::Chat ? QStringLiteral("Chat menu open.") : QStringLiteral("Settings menu open.");
+        openTopMenu(key == QByteArray("\x1b") + 'c' ? Menu::Chat : Menu::Settings);
     } else if (dialog_ != Dialog::None) {
         if (key == "\x1b") {
             closeDialog();
@@ -360,6 +406,24 @@ void TerminalUi::handleKey(const QByteArray &key)
             dialogInput_.chop(1);
         } else if (key.size() == 1 && key.at(0) >= ' ') {
             dialogInput_.append(QString::fromUtf8(key));
+        }
+    } else if (focus_ == Focus::Menu && key.size() == 1 && QChar(key.at(0)).isLetter()) {
+        // Accelerator letters open a menu, or pick an item in the open one.
+        const QChar letter = QChar(key.at(0)).toLower();
+        if (openMenu_ == Menu::None) {
+            for (int menu = 0; menu < menuTitles().size(); ++menu) {
+                if (accelerator(menuTitles().at(menu)) == letter)
+                    openTopMenu(menu == 0 ? Menu::Chat : Menu::Settings);
+            }
+        } else {
+            const auto entries = menuEntries(openMenu_ == Menu::Chat ? 0 : 1);
+            for (int item = 0; item < entries.size(); ++item) {
+                if (accelerator(entries.at(item).label) == letter) {
+                    selectedAction_ = item;
+                    activateMenuItem();
+                    break;
+                }
+            }
         }
     } else if (key == "\x1b") {
         openMenu_ = Menu::None;
@@ -397,23 +461,22 @@ void TerminalUi::handleKey(const QByteArray &key)
             }
         } else if (focus_ == Focus::Menu) {
             if (openMenu_ != Menu::None) {
-                const int actionCount = openMenu_ == Menu::Chat ? 3 : 4;
+                const int actionCount = menuEntries(openMenu_ == Menu::Chat ? 0 : 1).size();
                 selectedAction_ = (selectedAction_ + delta + actionCount) % actionCount;
-            } else {
-                selectedMenu_ = std::clamp(selectedMenu_ + delta, 0, 1);
+            } else if (delta > 0) {
+                openTopMenu(selectedMenu_ == 0 ? Menu::Chat : Menu::Settings);
             }
         } else if (!conversations_.isEmpty()) {
             currentConversation_ = (currentConversation_ + delta + conversations_.size())
                                    % conversations_.size();
             selectedConversation_ = currentConversation_;
             conversations_[currentConversation_].unread = false;
-            if (currentConversationDisconnected()) input_.clear();
+            if (currentConversationDisconnected()) status_ = ReconnectHint;
         }
     } else if (key == "\x1b[C" || key == "\x1b[D") {
         if (focus_ == Focus::Menu) {
             if (openMenu_ != Menu::None) {
-                openMenu_ = key == "\x1b[C" ? Menu::Settings : Menu::Chat;
-                selectedAction_ = 0;
+                openTopMenu(openMenu_ == Menu::Chat ? Menu::Settings : Menu::Chat);
             } else {
                 selectedMenu_ = selectedMenu_ == 0 ? 1 : 0;
             }
@@ -433,7 +496,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                                    % conversations_.size();
             selectedConversation_ = currentConversation_;
             conversations_[currentConversation_].unread = false;
-            if (currentConversationDisconnected()) input_.clear();
+            if (currentConversationDisconnected()) status_ = ReconnectHint;
         }
     } else if (key == "\r" || key == "\n") {
         if (focus_ == Focus::Hosts) {
@@ -449,7 +512,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                 selectedConversation_ < conversations_.size()) {
                 currentConversation_ = selectedConversation_;
                 conversations_[currentConversation_].unread = false;
-                if (currentConversationDisconnected()) input_.clear();
+                if (currentConversationDisconnected()) status_ = ReconnectHint;
                 focus_ = Focus::Chat;
                 status_ = QStringLiteral("Active tab: %1")
                               .arg(conversationTitle(
@@ -459,24 +522,21 @@ void TerminalUi::handleKey(const QByteArray &key)
             }
         } else if (focus_ == Focus::Menu) {
             if (openMenu_ != Menu::None) activateMenuItem();
-            else {
-                openMenu_ = selectedMenu_ == 0 ? Menu::Chat : Menu::Settings;
-                selectedAction_ = 0;
-                status_ = selectedMenu_ == 0 ? QStringLiteral("Chat menu open.")
-                                             : QStringLiteral("Settings menu open.");
-            }
-        } else if (currentConversationDisconnected()) {
-            input_.clear();
-            status_ = QStringLiteral("Re-connect to this host to start chatting");
+            else openTopMenu(selectedMenu_ == 0 ? Menu::Chat : Menu::Settings);
         } else {
             const QString text = input_.trimmed();
-            input_.clear();
-            if (text.startsWith(u'/')) {
+            if (!text.isEmpty() && !text.startsWith(u'/') && currentConversationDisconnected()) {
+                // Keep the draft; commands such as /connect still work.
+                status_ = ReconnectHint;
+            } else if (text.startsWith(u'/')) {
+                input_.clear();
                 handleCommand(text);
             } else if (!text.isEmpty() && currentConversation_ >= 0
                        && currentConversation_ < conversations_.size()) {
+                input_.clear();
                 sendChatMessage(text);
             } else if (!text.isEmpty()) {
+                input_.clear();
                 status_ = QStringLiteral("Select a host and press Enter to connect.");
             }
         }
@@ -493,11 +553,7 @@ void TerminalUi::handleKey(const QByteArray &key)
         QCoreApplication::quit();
         return;
     } else if (focus_ == Focus::Chat && key.size() == 1 && key.at(0) >= ' ') {
-        if (currentConversationDisconnected()) {
-            status_ = QStringLiteral("Re-connect to this host to start chatting");
-        } else {
-            input_.append(QString::fromUtf8(key));
-        }
+        input_.append(QString::fromUtf8(key));
     }
     syncLocalTyping();
     redraw();
@@ -550,7 +606,7 @@ void TerminalUi::handleCommand(const QString &command)
         currentConversation_ = index;
         selectedConversation_ = index;
         conversations_[index].unread = false;
-        if (currentConversationDisconnected()) input_.clear();
+        if (currentConversationDisconnected()) status_ = ReconnectHint;
         focus_ = Focus::Chat;
         print(QStringLiteral("Active tab: %1").arg(conversationTitle(conversations_.at(index))));
     } else if (name == QStringLiteral("/close")) {
@@ -610,6 +666,15 @@ void TerminalUi::handleCommand(const QString &command)
     } else {
         print(QStringLiteral("Unknown command. Type /help for available commands."));
     }
+}
+
+void TerminalUi::openTopMenu(Menu menu)
+{
+    openMenu_ = menu;
+    selectedMenu_ = menu == Menu::Chat ? 0 : 1;
+    selectedAction_ = 0;
+    focus_ = Focus::Menu;
+    status_ = menu == Menu::Chat ? QStringLiteral("Chat menu open.") : QStringLiteral("Settings menu open.");
 }
 
 void TerminalUi::activateMenuItem()
@@ -766,7 +831,6 @@ void TerminalUi::connectToAddress(const QString &address, quint16 port, const QS
         conversations_[index].unread = false;
         focus_ = Focus::Chat;
         if (conversations_.at(index).disconnected) {
-            input_.clear();
             existing->reconnectToHost(address, port);
             setStatus(QStringLiteral("Reconnecting to %1 in tab %2.").arg(address).arg(index + 1));
         } else {
@@ -937,10 +1001,11 @@ void TerminalUi::addSession(ChatSession *session, const QString &title)
         if (index >= 0) {
             conversations_[index].disconnected = true;
             conversations_[index].liveTranslate = false;
-            if (index == currentConversation_) input_.clear();
             appendTranscript(index, QStringLiteral("* Disconnected."));
         }
-        setStatus(QStringLiteral("Disconnected."));
+        setStatus(index >= 0 && index == currentConversation_
+                      ? QStringLiteral("Disconnected. %1.").arg(ReconnectHint)
+                      : QStringLiteral("Disconnected."));
     });
     session->beginHandshake(nickname());
     print(QStringLiteral("Opened tab %1: %2").arg(index + 1).arg(title));
@@ -1012,7 +1077,7 @@ void TerminalUi::closeConversation(int index)
     selectedConversation_ = currentConversation_;
     if (currentConversation_ >= 0)
         conversations_[currentConversation_].unread = false;
-    if (currentConversationDisconnected()) input_.clear();
+    if (currentConversationDisconnected()) status_ = ReconnectHint;
     syncLocalTyping();
     print(QStringLiteral("Closed tab %1.").arg(index + 1));
 }
@@ -1216,6 +1281,35 @@ void TerminalUi::drawDialog() const
     terminalOutput << "\x1b[1;35m" << bottomBorder << "\x1b[0m";
 }
 
+void TerminalUi::drawMenu(int column) const
+{
+    const auto entries = menuEntries(openMenu_ == Menu::Chat ? 0 : 1);
+    int labelColumns = 0;
+    int shortcutColumns = 0;
+    for (const auto &entry : entries) {
+        labelColumns = std::max(labelColumns, labelWidth(entry.label));
+        shortcutColumns = std::max(shortcutColumns, int(entry.shortcut.size()));
+    }
+    const int inner = 2 + labelColumns + (shortcutColumns > 0 ? 4 + shortcutColumns : 0);
+    const int width = inner + 2;
+    const int left = std::max(1, std::min(column, terminalColumns_ - width + 1));
+    const auto at = [left](int row) { terminalOutput << QStringLiteral("\x1b[%1;%2H").arg(row).arg(left); };
+    // Drawn right under the menu bar, over the conversation area.
+    at(2);
+    terminalOutput << MenuBoxStyle << QStringLiteral("┌") << QString(inner, u'─') << QStringLiteral("┐");
+    for (int item = 0; item < entries.size(); ++item) {
+        const auto &entry = entries.at(item);
+        const int gap = inner - 2 - labelWidth(entry.label) - int(entry.shortcut.size());
+        at(3 + item);
+        terminalOutput << MenuBoxStyle << QStringLiteral("│")
+                       << (item == selectedAction_ ? MenuHighlightStyle : MenuBoxStyle) << QStringLiteral(" ")
+                       << styledLabel(entry.label) << QString(std::max(0, gap), u' ') << entry.shortcut
+                       << QStringLiteral(" ") << MenuBoxStyle << QStringLiteral("│");
+    }
+    at(3 + entries.size());
+    terminalOutput << MenuBoxStyle << QStringLiteral("└") << QString(inner, u'─') << QStringLiteral("┘") << "\x1b[0m";
+}
+
 void TerminalUi::redraw()
 {
     if (!ansi_) return;
@@ -1230,45 +1324,31 @@ void TerminalUi::redraw()
     if (terminalColumns_ == 0) terminalColumns_ = 80;
     const int sidebar = std::min(30, std::max(18, terminalColumns_ / 3));
     const int mainWidth = terminalColumns_ - sidebar - 1;
-    const int contentRows = std::max(1, terminalRows_ - 6);
+    const int contentRows = std::max(1, terminalRows_ - 5);
     terminalOutput << "\x1b[H\x1b[2J";
-    const QString top = QStringLiteral("┌%1┐").arg(QString(std::max(1, terminalColumns_ - 2), u'─'));
-    const QString divider = QStringLiteral("├%1┼%2┤").arg(QString(std::max(0, sidebar - 1), u'─'),
-                                                          QString(std::max(0, mainWidth - 1), u'─'));
+    const QString top = QStringLiteral("┌%1┬%2┐").arg(QString(std::max(0, sidebar - 1), u'─'),
+                                                     QString(std::max(0, mainWidth - 1), u'─'));
     const QString bottom = QStringLiteral("└%1┴%2┘").arg(QString(std::max(0, sidebar - 1), u'─'),
                                                         QString(std::max(0, mainWidth - 1), u'─'));
-    terminalOutput << "\x1b[1;34m" << top << "\x1b[0m\x1b[K\n";
-    const bool chatMenuSelected =
-        openMenu_ == Menu::Chat ||
-        (openMenu_ == Menu::None && focus_ == Focus::Menu && selectedMenu_ == 0);
-    const bool settingsMenuSelected =
-        openMenu_ == Menu::Settings ||
-        (openMenu_ == Menu::None && focus_ == Focus::Menu && selectedMenu_ == 1);
-    QString menu = QStringLiteral("│ \x1b[1;36mLANChat\x1b[0m  ")
-                       + (focus_ == Focus::Menu && openMenu_ == Menu::None && selectedMenu_ == 0
-                              ? QStringLiteral("\x1b[1;30;43m[Chat]\x1b[0m")
-                              : chatMenuSelected ? QStringLiteral("\x1b[1;33m[Chat]\x1b[0m")
-                                                 : QStringLiteral("[Chat]"))
-                       + QStringLiteral("  ")
-                       + (focus_ == Focus::Menu && openMenu_ == Menu::None && selectedMenu_ == 1
-                              ? QStringLiteral("\x1b[1;30;43m[Settings]\x1b[0m")
-                              : settingsMenuSelected ? QStringLiteral("\x1b[1;33m[Settings]\x1b[0m")
-                                                     : QStringLiteral("[Settings]"))
-                       + QStringLiteral("  \x1b[2mAlt-C / Alt-S opens menus\x1b[0m");
-    terminalOutput << menu << "\x1b[" << terminalColumns_ << "G\x1b[1;34m│\x1b[0m\x1b[K\n";
-    if (openMenu_ != Menu::None) {
-        const QStringList actions = openMenu_ == Menu::Chat
-                                        ? QStringList{QStringLiteral("Connect To"), QStringLiteral("Close Chat"), QStringLiteral("Quit")}
-                                        : QStringList{QStringLiteral("Nickname"), QStringLiteral("Ollama settings"),
-                                                      QStringLiteral("Listening port"), QStringLiteral("Back")};
-        QString actionLine = QStringLiteral("│ ");
-        for (int i = 0; i < actions.size(); ++i)
-            actionLine += i == selectedAction_ ? QStringLiteral("\x1b[1;30;43m %1 \x1b[0m ").arg(actions.at(i))
-                                               : QStringLiteral("\x1b[36m %1 \x1b[0m ").arg(actions.at(i));
-        terminalOutput << actionLine << "\x1b[" << terminalColumns_ << "G\x1b[1;34m│\x1b[0m\x1b[K\n";
-    } else {
-        terminalOutput << "\x1b[1;34m" << divider << "\x1b[0m\x1b[K\n";
+    // MS-DOS Edit style menu bar: blue across the full width, accelerators
+    // underlined, and the open or focused menu highlighted.
+    QString menuBar = MenuBarStyle + u' ';
+    int menuBarWidth = 1;
+    int openMenuColumn = 1;
+    for (int menu = 0; menu < menuTitles().size(); ++menu) {
+        const bool open = openMenu_ != Menu::None && selectedMenu_ == menu;
+        const bool focused = openMenu_ == Menu::None && focus_ == Focus::Menu && selectedMenu_ == menu;
+        if (open) openMenuColumn = menuBarWidth + 1;
+        menuBar += (open || focused ? MenuHighlightStyle : MenuBarStyle) + u' '
+                   + styledLabel(menuTitles().at(menu)) + u' ' + MenuBarStyle + u' ';
+        menuBarWidth += labelWidth(menuTitles().at(menu)) + 3;
     }
+    QString menuHint = QStringLiteral("Alt-C / Alt-S   LANChat ");
+    if (menuBarWidth + displayWidth(menuHint) > terminalColumns_) menuHint = QStringLiteral("LANChat ");
+    if (menuBarWidth + displayWidth(menuHint) > terminalColumns_) menuHint.clear();
+    menuBar += QString(std::max(0, terminalColumns_ - menuBarWidth - displayWidth(menuHint)), u' ') + menuHint;
+    terminalOutput << menuBar << "\x1b[0m\x1b[K\n";
+    terminalOutput << "\x1b[1;34m" << top << "\x1b[0m\x1b[K\n";
     const auto hosts = sortedHosts();
     for (int row = 0; row < contentRows; ++row) {
         QString left = QStringLiteral("│");
@@ -1414,17 +1494,12 @@ void TerminalUi::redraw()
     }
     terminalOutput << "\x1b[30;46m" << elide(QStringLiteral(" %1").arg(status_), terminalColumns_)
                    << "\x1b[0m\x1b[K\n";
-    if (currentConversationDisconnected()) {
-        terminalOutput << "\x1b[2;3m> "
-                       << elide(QStringLiteral("Re-connect to this host to start chatting"),
-                                terminalColumns_ - 2)
-                       << "\x1b[0m\x1b[K";
-    } else {
-        terminalOutput << "\x1b[1;32m> \x1b[0m"
-                       << elide(input_, terminalColumns_ - 2) << "\x1b[K";
-    }
+    terminalOutput << "\x1b[1;32m> \x1b[0m" << elide(input_, terminalColumns_ - 2) << "\x1b[K";
+    if (openMenu_ != Menu::None) drawMenu(openMenuColumn);
     drawDialog();
-    terminalOutput << "\x1b[?25h" << Qt::flush;
+    // The cursor would otherwise blink inside the open drop-down.
+    terminalOutput << (openMenu_ != Menu::None && dialog_ == Dialog::None ? "\x1b[?25l" : "\x1b[?25h")
+                   << Qt::flush;
 }
 
 void TerminalUi::redrawIfResized()
