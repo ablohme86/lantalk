@@ -55,7 +55,8 @@ private:
   void clearOutgoingTranslationStatus();
   void saveAttachmentAs(const QString &path, const QString &suggestedName);
   void appendFile(const QString &sender, const QString &name,
-                  const QString &path, const QString &mimeType);
+                  const QString &path, const QString &mimeType,
+                  bool received);
 
   ChatSession *session_;
   QLabel *status_;

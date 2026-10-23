@@ -18,8 +18,9 @@
   conversation and open in a full-view chat panel with a close button when
   clicked.
 - File sends are asynchronous and show italic progress in the chat input.
-- Received attachments are stored in the OS cache and removed when their chat
-  closes; every attachment includes a `Save as...` link.
+- Received attachments are stored in the OS cache, removed when their chat
+  closes, and include a `Save as...` link. Sent attachments show only the
+  filename, and outgoing messages use the `You` label.
 - Starting LANChat again activates the existing process instead of opening a
   second UI.
 

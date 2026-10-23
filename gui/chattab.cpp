@@ -153,12 +153,12 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(
       session_, &ChatSession::fileSent, this,
       [this](const QString &name, const QString &path, const QString &mime) {
-        appendFile(QStringLiteral("Me"), name, path, mime);
+        appendFile(QStringLiteral("You"), name, path, mime, false);
       });
   connect(
       session_, &ChatSession::fileReceived, this,
       [this](const QString &name, const QString &path, const QString &mime) {
-        appendFile(session_->peerName(), name, path, mime);
+        appendFile(session_->peerName(), name, path, mime, true);
       });
   connect(session_, &ChatSession::fileSendProgressChanged, this,
           [this](int percent) {
@@ -311,7 +311,7 @@ void ChatTab::outgoingTranslationFinished(const QString &translation,
   outgoingPending_ = false;
   clearOutgoingTranslationStatus();
   session_->sendMessage(translation, pendingOriginal_);
-  appendMessage(QStringLiteral("Me"), pendingOriginal_, translation,
+  appendMessage(QStringLiteral("You"), pendingOriginal_, translation,
                 QStringLiteral("Sent translation"));
   pendingOriginal_.clear();
   input_->setFocus(Qt::OtherFocusReason);
@@ -324,7 +324,7 @@ void ChatTab::incomingTranslationFinished(const QString &translation,
 
 void ChatTab::sendText(const QString &text) {
   session_->sendMessage(text);
-  appendMessage(QStringLiteral("Me"), text);
+  appendMessage(QStringLiteral("You"), text);
   input_->setFocus(Qt::OtherFocusReason);
 }
 
@@ -460,7 +460,8 @@ void ChatTab::saveAttachmentAs(const QString &path,
 }
 
 void ChatTab::appendFile(const QString &sender, const QString &name,
-                         const QString &path, const QString &mimeType) {
+                         const QString &path, const QString &mimeType,
+                         bool received) {
   auto cursor = log_->textCursor();
   cursor.movePosition(QTextCursor::End);
   if (!cursor.block().text().isEmpty()) {
@@ -472,12 +473,14 @@ void ChatTab::appendFile(const QString &sender, const QString &name,
   QTextCharFormat nameFormat;
   nameFormat.setFontItalic(true);
   cursor.insertText(name, nameFormat);
-  QTextCharFormat saveFormat;
-  saveFormat.setAnchor(true);
-  saveFormat.setAnchorHref(
-      attachmentActionUrl(QStringLiteral("save-as"), path, name).toString());
-  saveFormat.setFontUnderline(true);
-  cursor.insertText(QStringLiteral(" (Save as...)"), saveFormat);
+  if (received) {
+    QTextCharFormat saveFormat;
+    saveFormat.setAnchor(true);
+    saveFormat.setAnchorHref(
+        attachmentActionUrl(QStringLiteral("save-as"), path, name).toString());
+    saveFormat.setFontUnderline(true);
+    cursor.insertText(QStringLiteral(" (Save as...)"), saveFormat);
+  }
   cursor.insertBlock();
   if (mimeType.startsWith(QStringLiteral("image/"))) {
     QTextImageFormat thumbnail;
