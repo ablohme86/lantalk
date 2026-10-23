@@ -33,10 +33,11 @@ public:
   ~CentralClient() override;
 
   // Connects to `hostSpec` ("host" or "host:port") and registers as
-  // `nickname`, reconnecting whenever the connection is lost. Calling it
-  // again with other values starts over; an empty spec is the same as stop().
+  // `nickname`, with `password` if the service requires one, reconnecting
+  // whenever the connection is lost. Calling it again with other values
+  // starts over; an empty spec is the same as stop().
   void start(const QString &hostSpec, const QString &nickname,
-             quint16 listenPort);
+             quint16 listenPort, const QString &password = {});
   void stop();
   bool isActive() const;
   // Registered with the service, so the peer list is current.
@@ -85,11 +86,13 @@ private:
   quint16 port_ = 0;
   QString nickname_;
   quint16 listenPort_ = 0;
+  QString password_;
   QString clientId_;
   QString lastError_;
   bool ready_ = false;
-  // Stops reconnecting after the service replaced this client with another
-  // instance using the same address and nickname.
+  // Stops reconnecting after the service refused this client (e.g. a wrong
+  // password) or replaced it with another instance using the same address
+  // and nickname, until start() is called again.
   bool replaced_ = false;
   QList<Peer> peers_;
   QHash<QString, QPointer<RelayTransport>> channels_;

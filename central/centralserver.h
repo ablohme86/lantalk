@@ -30,6 +30,8 @@ public:
   // Registered clients.
   int clientCount() const;
   int channelCount() const;
+  // Clients must prove they know `password` to sign in; empty allows all.
+  void setPassword(const QString &password);
   void setLogger(std::function<void(const QString &)> logger);
   void setIdleTimeout(int milliseconds);
 
@@ -41,6 +43,9 @@ private:
     quint16 port = 0;
     QByteArray buffer;
     bool registered = false;
+    // A failed sign-in waits briefly for its rejection; ignore it until then.
+    bool rejected = false;
+    QByteArray nonce;
     QSet<QString> channels;
     QElapsedTimer lastActivity;
   };
@@ -73,5 +78,6 @@ private:
   QHash<QString, Channel> channels_;
   QTimer sweepTimer_;
   int idleTimeoutMs_;
+  QString password_;
   std::function<void(const QString &)> logger_;
 };

@@ -74,20 +74,21 @@ CentralClient::~CentralClient() {
 }
 
 void CentralClient::start(const QString &hostSpec, const QString &nickname,
-                          quint16 listenPort) {
+                          quint16 listenPort, const QString &password) {
   const auto spec = hostSpec.trimmed();
   if (spec.isEmpty()) {
     stop();
     return;
   }
   if (spec == hostSpec_ && nickname == nickname_ && listenPort == listenPort_ &&
-      !replaced_) {
+      password == password_ && !replaced_) {
     return;
   }
   stop();
   hostSpec_ = spec;
   nickname_ = nickname;
   listenPort_ = listenPort;
+  password_ = password;
   if (!CentralProtocol::parseHostSpec(spec, &host_, &port_)) {
     lastError_ = QStringLiteral("\"%1\" is not a valid central host.").arg(spec);
     emit stateChanged();
@@ -185,11 +186,7 @@ void CentralClient::connectToService() {
 }
 
 void CentralClient::handleConnected() {
-  sendLine(QStringLiteral("CENTRAL_HELLO %1 %2 %3")
-               .arg(CentralProtocol::Version)
-               .arg(QString::fromLatin1(CentralProtocol::encodeField(nickname_)))
-               .arg(listenPort_));
-  pingTimer_.start();
+  // The service speaks first, with CENTRAL_CHALLENGE.
   idleTimer_.start();
 }
 
@@ -242,6 +239,17 @@ void CentralClient::processLine(const QString &line) {
     return;
   }
   const auto parts = line.split(u' ', Qt::SkipEmptyParts);
+  if (command == QStringLiteral("CENTRAL_CHALLENGE") && parts.size() == 2 &&
+      clientId_.isEmpty()) {
+    sendLine(QStringLiteral("CENTRAL_HELLO %1 %2 %3 %4")
+                 .arg(CentralProtocol::Version)
+                 .arg(QString::fromLatin1(CentralProtocol::encodeField(nickname_)))
+                 .arg(listenPort_)
+                 .arg(QString::fromLatin1(CentralProtocol::authProof(
+                     password_, parts.at(1).toLatin1()))));
+    pingTimer_.start();
+    return;
+  }
   if (command == QStringLiteral("CENTRAL_PEER") && parts.size() == 5) {
     bool portIsValid = false;
     Peer peer{parts.at(1), CentralProtocol::decodeField(parts.at(2)),

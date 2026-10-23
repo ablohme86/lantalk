@@ -47,5 +47,6 @@ private:
   QLineEdit *ollamaModel_;
   QSpinBox *listenPort_;
   QLineEdit *centralHost_;
+  QLineEdit *centralPassword_;
   QCheckBox *notifications_;
 };

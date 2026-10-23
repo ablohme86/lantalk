@@ -181,6 +181,7 @@ void TerminalUi::applyNetworkMode()
     const QSettings settings;
     const auto centralHost = settings.value(QStringLiteral("network/centralHost")).toString().trimmed();
     const auto listenPort = quint16(settings.value(QStringLiteral("network/listenPort"), DefaultPort).toUInt());
+    const auto password = settings.value(QStringLiteral("network/centralPassword")).toString();
     QString modeKey;
     if (centralHost.isEmpty()) {
         central_.stop();
@@ -192,8 +193,8 @@ void TerminalUi::applyNetworkMode()
         server_.close();
         stopDiscovery();
         ChatTransport::setFactory(central_.transportFactory());
-        central_.start(centralHost, nickname(), listenPort);
-        modeKey = QStringLiteral("%1\n%2\n%3").arg(centralHost, nickname()).arg(listenPort);
+        central_.start(centralHost, nickname(), listenPort, password);
+        modeKey = QStringLiteral("%1\n%2\n%3\n%4").arg(centralHost, nickname()).arg(listenPort).arg(password);
     }
     const bool modeChanged = networkModeApplied_ && modeKey != networkModeKey_;
     networkModeKey_ = modeKey;
@@ -219,7 +220,7 @@ void TerminalUi::reportCentralState()
     if (central_.isReady()) {
         setStatus(QStringLiteral("Connected to central host %1.").arg(central_.hostSpec()));
     } else if (!central_.lastError().isEmpty()) {
-        setStatus(QStringLiteral("Cannot reach central host %1: %2")
+        setStatus(QStringLiteral("Not connected to central host %1: %2")
                       .arg(central_.hostSpec(), central_.lastError()));
     } else {
         setStatus(QStringLiteral("Connecting to central host %1...").arg(central_.hostSpec()));
@@ -954,9 +955,28 @@ void TerminalUi::acceptDialog()
             return;
         }
         QSettings().setValue(QStringLiteral("network/centralHost"), value);
+        if (value.isEmpty()) {
+            dialog_ = Dialog::None;
+            applyNetworkMode();
+            status_ = QStringLiteral("Central host removed; chatting directly on the LAN.");
+            return;
+        }
+        // The password is never shown, so the field starts empty; leaving it
+        // empty keeps the saved one.
+        openDialog(Dialog::CentralPassword, QStringLiteral("Central Host"),
+                   QStringLiteral("Password (Enter keeps it, - for none)"), QString());
+        return;
+    } else if (dialog == Dialog::CentralPassword) {
+        // Passwords may start or end with spaces, so use the raw input.
+        const QString password = dialogInput_;
+        if (password == QStringLiteral("-")) {
+            QSettings().remove(QStringLiteral("network/centralPassword"));
+        } else if (!password.isEmpty()) {
+            QSettings().setValue(QStringLiteral("network/centralPassword"), password);
+        }
         dialog_ = Dialog::None;
+        dialogInput_.clear();
         applyNetworkMode();
-        if (value.isEmpty()) status_ = QStringLiteral("Central host removed; chatting directly on the LAN.");
         return;
     }
     dialog_ = Dialog::None;
@@ -1502,7 +1522,10 @@ void TerminalUi::drawDialog() const
     at(3);
     terminalOutput << "\x1b[35m" << boxedLine(dialogPrompt_, width) << "\x1b[0m";
     at(4);
-    terminalOutput << "\x1b[1;36m" << boxedLine(QStringLiteral("> %1").arg(dialogInput_), width) << "\x1b[0m";
+    const auto shownInput = dialog_ == Dialog::CentralPassword
+                                ? QString(dialogInput_.size(), u'*')
+                                : dialogInput_;
+    terminalOutput << "\x1b[1;36m" << boxedLine(QStringLiteral("> %1").arg(shownInput), width) << "\x1b[0m";
     at(5);
     terminalOutput << "\x1b[2;35m" << boxedLine(QStringLiteral("Enter = accept   Esc = cancel"), width) << "\x1b[0m";
     at(6);

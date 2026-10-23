@@ -60,7 +60,7 @@ private:
 
   enum class Focus { Hosts, Chat, Conversations, Menu };
   enum class Menu { None, Chat, Settings };
-  enum class Dialog { None, Connect, Nickname, OllamaUrl, OllamaModel, ListenPort, CentralHost, CloseChat, Quit };
+  enum class Dialog { None, Connect, Nickname, OllamaUrl, OllamaModel, ListenPort, CentralHost, CentralPassword, CloseChat, Quit };
 
   void configureNickname();
   void configureTerminal();

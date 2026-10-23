@@ -3,6 +3,7 @@
 #include "protocol/centralprotocol.h"
 #include "protocol/conversationidentity.h"
 
+#include <QRandomGenerator>
 #include <QTcpSocket>
 #include <QUuid>
 
@@ -14,6 +15,15 @@ constexpr qint64 MaximumPendingBytes = 128LL * 1024 * 1024;
 // Clients must register this soon after connecting.
 constexpr qint64 RegistrationTimeoutMs = 15 * 1000;
 constexpr qsizetype MaximumNicknameLength = 256;
+// Slows down password guessing: a failed sign-in is answered this late.
+constexpr int RejectDelayMs = 1000;
+
+QByteArray createNonce() {
+  QByteArray nonce(16, Qt::Uninitialized);
+  QRandomGenerator::system()->fillRange(
+      reinterpret_cast<quint32 *>(nonce.data()), nonce.size() / 4);
+  return nonce.toHex();
+}
 
 } // namespace
 
@@ -52,6 +62,10 @@ int CentralServer::clientCount() const {
 
 int CentralServer::channelCount() const { return int(channels_.size()); }
 
+void CentralServer::setPassword(const QString &password) {
+  password_ = password;
+}
+
 void CentralServer::setLogger(std::function<void(const QString &)> logger) {
   logger_ = std::move(logger);
 }
@@ -67,11 +81,13 @@ void CentralServer::acceptClients() {
     Client client;
     client.address = CentralProtocol::formatAddress(socket->peerAddress());
     client.lastActivity.start();
+    client.nonce = createNonce();
     clients_.insert(socket, client);
     connect(socket, &QTcpSocket::readyRead, this,
             [this, socket] { readClient(socket); });
     connect(socket, &QTcpSocket::disconnected, this,
             [this, socket] { dropClient(socket, QStringLiteral("disconnected")); });
+    send(socket, "CENTRAL_CHALLENGE " + client.nonce);
   }
 }
 
@@ -99,6 +115,7 @@ void CentralServer::readClient(QTcpSocket *socket) {
 void CentralServer::processLine(QTcpSocket *socket, const QString &line) {
   const auto command = line.section(u' ', 0, 0);
   auto &client = clients_[socket];
+  if (client.rejected) return;
   if (!client.registered) {
     if (command == QStringLiteral("CENTRAL_HELLO")) {
       registerClient(socket, line.split(u' ', Qt::SkipEmptyParts));
@@ -137,7 +154,7 @@ void CentralServer::registerClient(QTcpSocket *socket,
   const auto nickname =
       CentralProtocol::decodeField(parts.value(2)).simplified();
   const auto port = parts.value(3).toUShort(&portIsValid);
-  if (parts.size() != 4 || !versionIsValid || version < 1 || !portIsValid ||
+  if (parts.size() != 5 || !versionIsValid || version < 1 || !portIsValid ||
       nickname.isEmpty() || nickname.size() > MaximumNicknameLength) {
     send(socket, "CENTRAL_REJECT " +
                      CentralProtocol::encodeField(QStringLiteral(
@@ -147,6 +164,26 @@ void CentralServer::registerClient(QTcpSocket *socket,
   }
 
   auto &client = clients_[socket];
+  if (!password_.isEmpty() &&
+      !CentralProtocol::sameProof(
+          parts.at(4).toLatin1(),
+          CentralProtocol::authProof(password_, client.nonce))) {
+    const bool withoutPassword = parts.at(4) == QStringLiteral("-");
+    const auto reason =
+        withoutPassword
+            ? QStringLiteral("The central host requires a password.")
+            : QStringLiteral("Wrong password for the central host.");
+    client.rejected = true;
+    log(QStringLiteral("Rejected sign-in by %1 (%2): %3")
+            .arg(nickname, client.address,
+                 withoutPassword ? QStringLiteral("no password")
+                                 : QStringLiteral("wrong password")));
+    QTimer::singleShot(RejectDelayMs, socket, [this, socket, reason] {
+      send(socket, "CENTRAL_REJECT " + CentralProtocol::encodeField(reason));
+      dropClient(socket, QStringLiteral("was rejected"));
+    });
+    return;
+  }
   client.nickname = nickname;
   client.port = port;
   // The same address and nickname is the same conversation partner for

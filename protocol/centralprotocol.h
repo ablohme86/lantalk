@@ -2,7 +2,9 @@
 
 #include <QAbstractSocket>
 #include <QByteArray>
+#include <QCryptographicHash>
 #include <QHostAddress>
+#include <QMessageAuthenticationCode>
 #include <QString>
 
 // The LANTALK CENTRAL protocol between LANTalk clients and
@@ -11,6 +13,10 @@
 // then opens virtual channels to other clients. Each channel carries an
 // unmodified LANCHAT PROTOCOL conversation, one line per CENTRAL_DATA, so the
 // service only relays lines and never interprets the chat itself.
+//
+// The service opens with CENTRAL_CHALLENGE <nonce>. A service started with a
+// password only accepts a CENTRAL_HELLO whose proof is authProof(password,
+// nonce), so the password itself never crosses the network.
 namespace CentralProtocol {
 
 inline constexpr quint16 DefaultCentralPort = 45455;
@@ -80,6 +86,26 @@ inline bool parseHostSpec(const QString &spec, QString *host, quint16 *port) {
   if (host) *host = value;
   if (port) *port = parsedPort;
   return true;
+}
+
+// HMAC-SHA256 of the challenge, keyed with the password, in hex; "-" when
+// there is no password.
+inline QByteArray authProof(const QString &password, const QByteArray &nonce) {
+  if (password.isEmpty()) return QByteArrayLiteral("-");
+  return QMessageAuthenticationCode::hash("LANTALK_CENTRAL " + nonce,
+                                          password.toUtf8(),
+                                          QCryptographicHash::Sha256)
+      .toHex();
+}
+
+// Compares in constant time, so timing does not reveal how much matched.
+inline bool sameProof(const QByteArray &left, const QByteArray &right) {
+  if (left.size() != right.size()) return false;
+  char difference = 0;
+  for (qsizetype index = 0; index < left.size(); ++index) {
+    difference |= char(left.at(index) ^ right.at(index));
+  }
+  return difference == 0;
 }
 
 inline bool isValidChannelId(const QString &id) {

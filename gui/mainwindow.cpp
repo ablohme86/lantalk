@@ -131,6 +131,8 @@ void MainWindow::applyNetworkMode() {
   const auto listenPort =
       quint16(settings.value(QStringLiteral("network/listenPort"), DefaultPort)
                   .toUInt());
+  const auto password =
+      settings.value(QStringLiteral("network/centralPassword")).toString();
   QString modeKey;
   if (centralHost.isEmpty()) {
     central_.stop();
@@ -142,10 +144,11 @@ void MainWindow::applyNetworkMode() {
     server_.close();
     stopDiscovery();
     ChatTransport::setFactory(central_.transportFactory());
-    central_.start(centralHost, nickname, listenPort);
-    modeKey = QStringLiteral("%1\n%2\n%3")
+    central_.start(centralHost, nickname, listenPort, password);
+    modeKey = QStringLiteral("%1\n%2\n%3\n%4")
                   .arg(centralHost, nickname)
-                  .arg(listenPort);
+                  .arg(listenPort)
+                  .arg(password);
     updateCentralStatus();
   }
   refreshHostList();
@@ -173,7 +176,7 @@ void MainWindow::updateCentralStatus() {
         QStringLiteral("Connected to central host %1").arg(central_.hostSpec()));
   } else if (!central_.lastError().isEmpty()) {
     statusBar()->showMessage(
-        QStringLiteral("Cannot reach central host %1: %2")
+        QStringLiteral("Not connected to central host %1: %2")
             .arg(central_.hostSpec(), central_.lastError()));
   } else {
     statusBar()->showMessage(

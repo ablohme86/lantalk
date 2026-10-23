@@ -11,7 +11,10 @@
   LAN. The host list shows the clients connected to the central host, and
   every conversation, including typing notifications, files and the Live
   Translate handshake, is relayed through it. Translation itself still
-  happens locally with your own Ollama server. Clearing the field returns
+  happens locally with your own Ollama server. Start the service with
+  `--password-file <file>` (or `LANTALK_CENTRAL_PASSWORD`) to require a
+  password, which clients enter as the Central host password; it is
+  checked by challenge-response and never sent over the network. Clearing the field returns
   to direct LAN chat, and open conversations move to the new route right
   away.
 

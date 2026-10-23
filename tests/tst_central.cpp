@@ -19,7 +19,7 @@ namespace {
 class CentralPeer {
 public:
   CentralPeer(const QString &nickname, quint16 servicePort,
-              quint16 listenPort = DefaultPort)
+              quint16 listenPort = DefaultPort, const QString &password = {})
       : nickname_(nickname) {
     client_.setReconnectInterval(100);
     QObject::connect(&client_, &CentralClient::incomingConnection,
@@ -30,7 +30,7 @@ public:
                        incoming_.append(session);
                      });
     client_.start(QStringLiteral("127.0.0.1:%1").arg(servicePort), nickname,
-                  listenPort);
+                  listenPort, password);
   }
   // Sessions go first, so they close their channels while the client lives.
   ~CentralPeer() { owner_.reset(); }
@@ -251,12 +251,60 @@ private slots:
     QCOMPARE(server.clientCount(), 1);
   }
 
+  void passwordIsRequiredWhenConfigured() {
+    CentralServer server;
+    server.setPassword(QStringLiteral("hemmelig passord"));
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    CentralPeer alice(QStringLiteral("alice"), server.serverPort(), DefaultPort,
+                      QStringLiteral("hemmelig passord"));
+    CentralPeer bob(QStringLiteral("bob"), server.serverPort(), DefaultPort,
+                    QStringLiteral("hemmelig passord"));
+    QTRY_VERIFY(hasPeer(alice.client(), QStringLiteral("bob")));
+    auto *outgoing = alice.connectTo(QStringLiteral("bob"));
+    QTRY_VERIFY(outgoing->isHandshakeComplete());
+
+    CentralPeer wrong(QStringLiteral("mallory"), server.serverPort(),
+                      DefaultPort, QStringLiteral("gjetning"));
+    CentralPeer none(QStringLiteral("eve"), server.serverPort());
+    QTRY_VERIFY(wrong.client().lastError().contains(QStringLiteral("Wrong password")));
+    QTRY_VERIFY(none.client().lastError().contains(QStringLiteral("requires a password")));
+    QVERIFY(!wrong.client().isReady());
+    QVERIFY(!none.client().isReady());
+    QVERIFY(!hasPeer(alice.client(), QStringLiteral("mallory")));
+    QCOMPARE(server.clientCount(), 2);
+    // A rejected client waits for new settings instead of retrying.
+    QTest::qWait(400);
+    QVERIFY(!wrong.client().isReady());
+    QVERIFY(wrong.client().lastError().contains(QStringLiteral("Wrong password")));
+
+    // New settings with the right password sign in.
+    wrong.client().start(QStringLiteral("127.0.0.1:%1").arg(server.serverPort()),
+                         QStringLiteral("mallory"), DefaultPort,
+                         QStringLiteral("hemmelig passord"));
+    QTRY_VERIFY(wrong.client().isReady());
+    QTRY_VERIFY(hasPeer(alice.client(), QStringLiteral("mallory")));
+  }
+
+  void proofsDependOnPasswordAndChallenge() {
+    const auto proof = CentralProtocol::authProof(QStringLiteral("a"), "n1");
+    QCOMPARE(proof.size(), 64);
+    QVERIFY(CentralProtocol::sameProof(
+        proof, CentralProtocol::authProof(QStringLiteral("a"), "n1")));
+    QVERIFY(!CentralProtocol::sameProof(
+        proof, CentralProtocol::authProof(QStringLiteral("b"), "n1")));
+    QVERIFY(!CentralProtocol::sameProof(
+        proof, CentralProtocol::authProof(QStringLiteral("a"), "n2")));
+    QCOMPARE(CentralProtocol::authProof({}, "n1"), QByteArray("-"));
+  }
+
   void silentClientsAreDropped() {
     CentralServer server;
     server.setIdleTimeout(200);
     QVERIFY(server.listen(QHostAddress::LocalHost, 0));
     RawPeer raw(server.serverPort());
-    raw.send(QStringLiteral("CENTRAL_HELLO 1 %1 45454")
+    QTRY_VERIFY(!raw.lines().isEmpty());
+    QVERIFY(raw.lines().first().startsWith(QStringLiteral("CENTRAL_CHALLENGE ")));
+    raw.send(QStringLiteral("CENTRAL_HELLO 1 %1 45454 -")
                  .arg(QString::fromLatin1(
                      CentralProtocol::encodeField(QStringLiteral("raw")))));
     QTRY_VERIFY(raw.lines().join(u'\n').contains(

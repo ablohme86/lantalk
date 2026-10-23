@@ -195,6 +195,19 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
   centralHost_->setText(
       settings.value(QStringLiteral("network/centralHost")).toString());
   layout->addRow(QStringLiteral("Central host"), centralHost_);
+  centralPassword_ = new QLineEdit(this);
+  centralPassword_->setEchoMode(QLineEdit::Password);
+  centralPassword_->setPlaceholderText(QStringLiteral("None"));
+  centralPassword_->setToolTip(
+      QStringLiteral("The password the central host was started with, if any."));
+  centralPassword_->setText(
+      settings.value(QStringLiteral("network/centralPassword")).toString());
+  centralPassword_->setEnabled(!centralHost_->text().trimmed().isEmpty());
+  connect(centralHost_, &QLineEdit::textChanged, centralPassword_,
+          [this](const QString &host) {
+            centralPassword_->setEnabled(!host.trimmed().isEmpty());
+          });
+  layout->addRow(QStringLiteral("Central host password"), centralPassword_);
   notifications_ = new QCheckBox(
       QStringLiteral("Notify me about new messages"), this);
   notifications_->setChecked(
@@ -217,6 +230,8 @@ void SettingsDialog::save() const {
   settings.setValue(QStringLiteral("network/listenPort"), listenPort_->value());
   settings.setValue(QStringLiteral("network/centralHost"),
                     centralHost_->text().trimmed());
+  settings.setValue(QStringLiteral("network/centralPassword"),
+                    centralPassword_->text());
   settings.setValue(QStringLiteral("notifications/enabled"),
                     notifications_->isChecked());
   settings.setValue(QStringLiteral("ollama/url"),

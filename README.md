@@ -151,8 +151,20 @@ lantalk-centralized-service --port 45455            # all addresses
 lantalk-centralized-service --listen 10.0.0.5 -p 45455
 ```
 
-It logs sign-ins and sign-outs, never message contents. A systemd unit
-might look like:
+To require a password, put it on the first line of a file and pass
+`--password-file <file>`, or set the `LANTALK_CENTRAL_PASSWORD` environment
+variable. There is no `--password` option because other users on the server
+can read command lines. Clients enter the same password under **Settings →
+General → Central host password** (TUI: the second prompt of **Settings →
+Central Host**). The password never crosses the network: the service sends
+a random challenge, and the client answers with an HMAC-SHA256 of it keyed
+with the password. A wrong or missing password is refused after a
+one-second delay and logged, and the client stops retrying until its
+settings change. Clients keep the password in their LANTalk settings in
+plain text.
+
+It logs sign-ins, sign-outs, and refused sign-ins, never message contents.
+A systemd unit might look like:
 
 ```ini
 [Unit]
@@ -160,7 +172,8 @@ Description=LANTalk central host
 After=network-online.target
 
 [Service]
-ExecStart=/opt/lantalk/bin/lantalk-centralized-service --port 45455
+ExecStart=/opt/lantalk/bin/lantalk-centralized-service --port 45455 --password-file ${CREDENTIALS_DIRECTORY}/password
+LoadCredential=password:/etc/lantalk/central-password
 DynamicUser=yes
 Restart=on-failure
 
@@ -168,15 +181,22 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-The service has no authentication or encryption. Anyone who can reach its
-port can sign in under any nickname and see who is online, and traffic
-crosses the network in clear text just like LAN chat. Run it on a trusted
-network or behind a VPN.
+Without a password, anyone who can reach the port can sign in under any
+nickname and see who is online. The password only controls who signs in:
+everyone who knows it can still use any nickname. Conversations are not
+encrypted and cross the network in clear text, just like LAN chat, and
+someone who records a sign-in can try to guess a weak password offline.
+Use a long password, and run the service on a trusted network or behind a
+VPN.
 
 ### Central protocol
 
-Clients and the service exchange `CENTRAL_` lines over TCP. A client signs in
-with `CENTRAL_HELLO <version> <nickname> <port>` and receives one
+Clients and the service exchange `CENTRAL_` lines over TCP. The service
+opens with `CENTRAL_CHALLENGE <nonce>`. The client signs in with
+`CENTRAL_HELLO <version> <nickname> <port> <proof>`, where the proof is the
+hex HMAC-SHA256 of `LANTALK_CENTRAL <nonce>` keyed with the password, or
+`-` without one. A refused sign-in gets `CENTRAL_REJECT <reason>`. A
+signed-in client receives one
 `CENTRAL_PEER <id> <nickname> <address> <port>` per connected client
 followed by `CENTRAL_WELCOME <id> <address>`. After that the service reports
 `CENTRAL_PEER` and `CENTRAL_PEER_GONE <id>` as clients come and go.
