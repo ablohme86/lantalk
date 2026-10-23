@@ -11,3 +11,7 @@
   addresses.
 - Launching from an interactive terminal now selects TUI automatically;
   `--tui` remains available to force it.
+
+### Fixed
+
+- The TUI no longer prints the connection confirmation twice.

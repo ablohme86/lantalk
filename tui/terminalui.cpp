@@ -686,7 +686,6 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
     connect(session, &ChatSession::peerIdentified, this, [this, session] {
         for (int index = 0; index < conversations_.size(); ++index) if (conversations_[index].session == session) {
             conversations_[index].title = conversationTitle(conversations_[index]);
-            appendTranscript(index, QStringLiteral("* Connected to %1").arg(conversations_[index].title));
             return;
         }
     });
