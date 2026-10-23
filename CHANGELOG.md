@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.7.0 - 2026-10-23
+
 ### Added
 
 - The GUI finds Ollama servers on port 11434 on this computer and on the
