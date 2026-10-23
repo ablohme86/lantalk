@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.2.0 - 2026-10-23
+
 ### Added
 
 - The GUI message input is a multi-line editor: `Shift+Enter` starts a new
