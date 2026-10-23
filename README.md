@@ -23,7 +23,8 @@ ANSI interface with `Chat` and `Settings` menu items, discovered hosts, chat
 tabs labeled with each peer's name and address, and a message area. The host
 list is labeled `HOSTS ON NETWORK`. Press `Tab` to move between the host list,
 chat input, connection tabs, and menu. Use the arrow keys to navigate and
-`Enter` to connect, activate a tab, or send.
+`Enter` to connect, activate a tab, open the focused top menu, or send. At the
+top menu, left/right selects `Chat` or `Settings` before you press `Enter`.
 GUI and TUI share chat history for peers with the same IP address and nickname.
 When a conversation is reopened, its 20 newest earlier messages appear in
 italics above an `Earlier messages` divider.

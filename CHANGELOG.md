@@ -23,7 +23,9 @@
 
 - The TUI shows connection tabs with peer names and addresses in the chat
   header. Press `Tab` to focus the tabs, use the arrow keys to choose one, and
-  press `Enter` to activate it. The host list heading is `HOSTS ON NETWORK`.
+  press `Enter` to activate it. `Tab` also focuses the top menu; use the arrow
+  keys to choose `Chat` or `Settings`, then press `Enter` to open it. The host
+  list heading is `HOSTS ON NETWORK`.
 - The TUI labels outgoing messages as `You` to match the GUI.
 - Chat messages are sent with Enter; the Send button has been removed from the
   chat input row.

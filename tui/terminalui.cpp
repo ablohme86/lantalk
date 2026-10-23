@@ -340,6 +340,7 @@ void TerminalUi::handleKey(const QByteArray &key)
 {
     if (key == QByteArray("\x1b") + 'c' || key == QByteArray("\x1b") + 's') {
         openMenu_ = key == QByteArray("\x1b") + 'c' ? Menu::Chat : Menu::Settings;
+        selectedMenu_ = openMenu_ == Menu::Chat ? 0 : 1;
         selectedAction_ = 0;
         focus_ = Focus::Menu;
         status_ = openMenu_ == Menu::Chat ? QStringLiteral("Chat menu open.") : QStringLiteral("Settings menu open.");
@@ -444,8 +445,12 @@ void TerminalUi::handleKey(const QByteArray &key)
             }
         } else if (focus_ == Focus::Menu) {
             if (openMenu_ != Menu::None) activateMenuItem();
-            else status_ = selectedMenu_ == 0 ? QStringLiteral("Press Alt-C for Chat actions.")
-                                               : QStringLiteral("Press Alt-S for Settings.");
+            else {
+                openMenu_ = selectedMenu_ == 0 ? Menu::Chat : Menu::Settings;
+                selectedAction_ = 0;
+                status_ = selectedMenu_ == 0 ? QStringLiteral("Chat menu open.")
+                                             : QStringLiteral("Settings menu open.");
+            }
         } else {
             const QString text = input_.trimmed();
             input_.clear();
@@ -1066,12 +1071,22 @@ void TerminalUi::redraw()
     const QString bottom = QStringLiteral("└%1┴%2┘").arg(QString(std::max(0, sidebar - 1), u'─'),
                                                         QString(std::max(0, mainWidth - 1), u'─'));
     terminalOutput << "\x1b[1;34m" << top << "\x1b[0m\x1b[K\n";
+    const bool chatMenuSelected =
+        openMenu_ == Menu::Chat ||
+        (openMenu_ == Menu::None && focus_ == Focus::Menu && selectedMenu_ == 0);
+    const bool settingsMenuSelected =
+        openMenu_ == Menu::Settings ||
+        (openMenu_ == Menu::None && focus_ == Focus::Menu && selectedMenu_ == 1);
     QString menu = QStringLiteral("│ \x1b[1;36mLANChat\x1b[0m  ")
-                       + (openMenu_ == Menu::Chat ? QStringLiteral("\x1b[1;33m[Chat]\x1b[0m")
-                                                   : QStringLiteral("[Chat]"))
+                       + (focus_ == Focus::Menu && openMenu_ == Menu::None && selectedMenu_ == 0
+                              ? QStringLiteral("\x1b[1;30;43m[Chat]\x1b[0m")
+                              : chatMenuSelected ? QStringLiteral("\x1b[1;33m[Chat]\x1b[0m")
+                                                 : QStringLiteral("[Chat]"))
                        + QStringLiteral("  ")
-                       + (openMenu_ == Menu::Settings ? QStringLiteral("\x1b[1;33m[Settings]\x1b[0m")
-                                                       : QStringLiteral("[Settings]"))
+                       + (focus_ == Focus::Menu && openMenu_ == Menu::None && selectedMenu_ == 1
+                              ? QStringLiteral("\x1b[1;30;43m[Settings]\x1b[0m")
+                              : settingsMenuSelected ? QStringLiteral("\x1b[1;33m[Settings]\x1b[0m")
+                                                     : QStringLiteral("[Settings]"))
                        + QStringLiteral("  \x1b[2mAlt-C / Alt-S opens menus\x1b[0m");
     terminalOutput << menu << "\x1b[" << terminalColumns_ << "G\x1b[1;34m│\x1b[0m\x1b[K\n";
     if (openMenu_ != Menu::None) {
