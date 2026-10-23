@@ -1,11 +1,11 @@
 #include "testsupport.h"
 
+#include "gui/chatinput.h"
 #include "gui/chattab.h"
 #include "translationrestorer.h"
 
 #include <QApplication>
 #include <QLabel>
-#include <QLineEdit>
 #include <QPushButton>
 #include <QSignalSpy>
 
@@ -34,7 +34,8 @@ private slots:
     QVERIFY(!indicator->isVisible());
     bobSession->noteLocalTyping(true);
     QTRY_VERIFY(indicator->isVisible());
-    QVERIFY(indicator->text().startsWith(QStringLiteral("bob is typing")));
+    QVERIFY(indicator->text().startsWith(
+        QStringLiteral("bob is typing a message")));
     bobSession->stopLocalTyping();
     QTRY_VERIFY(!indicator->isVisible());
   }
@@ -50,7 +51,7 @@ private slots:
     QTRY_COMPARE(bob.liveSessions().size(), 1);
     auto *bobSession = bob.liveSessions().first();
     QSignalSpy received(bobSession, &ChatSession::messageReceived);
-    auto *input = tab.findChild<QLineEdit *>();
+    auto *input = tab.findChild<ChatInput *>();
     QVERIFY(input);
 
     QTest::keyClicks(input, QStringLiteral("hello"));
@@ -63,6 +64,71 @@ private slots:
     QTRY_VERIFY(bobSession->peerTyping());
     QTest::keyClick(input, Qt::Key_Backspace);
     QTRY_VERIFY(!bobSession->peerTyping());
+  }
+
+  void shiftEnterAddsLinesAndEnterSendsThem() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    ChatTab tab(session);
+    session->setParent(&tab);
+    tab.resize(500, 400);
+    tab.show();
+    QTRY_VERIFY(session->isHandshakeComplete());
+    QTRY_COMPARE(bob.liveSessions().size(), 1);
+    QSignalSpy received(bob.liveSessions().first(),
+                        &ChatSession::messageReceived);
+    auto *input = tab.findChild<ChatInput *>();
+    QVERIFY(input);
+    const int singleLineHeight = input->height();
+
+    QTest::keyClicks(input, QStringLiteral("if (x) {"));
+    QTest::keyClick(input, Qt::Key_Return, Qt::ShiftModifier);
+    QTest::keyClicks(input, QStringLiteral("    run();"));
+    QTest::keyClick(input, Qt::Key_Return, Qt::ShiftModifier);
+    QTest::keyClicks(input, QStringLiteral("}"));
+    QCOMPARE(input->text(), QStringLiteral("if (x) {\n    run();\n}"));
+    QCOMPARE(received.size(), 0);
+    QTRY_VERIFY(input->height() > singleLineHeight);
+
+    QTest::keyClick(input, Qt::Key_Return);
+    QTRY_COMPARE(received.size(), 1);
+    QCOMPARE(received.first().first().toString(),
+             QStringLiteral("if (x) {\n    run();\n}"));
+    QVERIFY(input->text().isEmpty());
+    QTRY_COMPARE(input->height(), singleLineHeight);
+  }
+
+  void pastedCodeKeepsIndentationAndHeightIsCapped() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    ChatTab tab(session);
+    session->setParent(&tab);
+    tab.resize(500, 400);
+    tab.show();
+    QTRY_VERIFY(session->isHandshakeComplete());
+    QTRY_COMPARE(bob.liveSessions().size(), 1);
+    QSignalSpy received(bob.liveSessions().first(),
+                        &ChatSession::messageReceived);
+    auto *input = tab.findChild<ChatInput *>();
+    QVERIFY(input);
+
+    QStringList lines;
+    for (int line = 0; line < 20; ++line) {
+      lines << QStringLiteral("    line %1").arg(line);
+    }
+    input->insertPlainText(QStringLiteral("\n") + lines.join(u'\n') +
+                           QStringLiteral("  \n\n"));
+    const int cappedHeight = input->height();
+    input->insertPlainText(QStringLiteral("\nmore"));
+    QCOMPARE(input->height(), cappedHeight);
+
+    QTest::keyClick(input, Qt::Key_Return);
+    QTRY_COMPARE(received.size(), 1);
+    const auto message = received.first().first().toString();
+    QVERIFY(message.startsWith(QStringLiteral("    line 0\n")));
+    QVERIFY(message.endsWith(QStringLiteral("    line 19  \n\n\nmore")));
   }
 
   void savedTranslationResumesAndChecksButton() {

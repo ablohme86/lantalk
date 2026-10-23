@@ -9,6 +9,42 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of LANTalk is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <Files Include="../dist/windows/**" />
+    <Icon Id="LanTalkIcon" SourceFile="$(sys.SOURCEFILEDIR)../resources/lantalk.ico" />
+    <Property Id="ARPPRODUCTICON" Value="LanTalkIcon" />
+    <!-- msiexec /i LanTalk-....msi DESKTOPSHORTCUT=0 skips the desktop icon. -->
+    <Property Id="DESKTOPSHORTCUT" Value="1" />
+
+    <!-- C:\Program Files\LANTalk, holding Qt's install layout: bin\lantalk.exe
+         with qt.conf, and the plugins\ folder it points to. -->
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="LANTalk" />
+    </StandardDirectory>
+    <Files Include="../dist/windows/**" Directory="INSTALLFOLDER" />
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut">
+        <Shortcut
+            Id="StartMenuShortcut"
+            Name="LANTalk"
+            Description="Chat with people on your local network"
+            Target="[INSTALLFOLDER]bin\lantalk.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="LanTalkIcon" />
+        <RegistryValue Root="HKLM" Key="Software\LANTalk\Installer" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+
+    <StandardDirectory Id="DesktopFolder">
+      <Component Id="DesktopShortcut" Condition="DESKTOPSHORTCUT = 1">
+        <Shortcut
+            Id="DesktopShortcut"
+            Name="LANTalk"
+            Description="Chat with people on your local network"
+            Target="[INSTALLFOLDER]bin\lantalk.exe"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="LanTalkIcon" />
+        <RegistryValue Root="HKLM" Key="Software\LANTalk\Installer" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
   </Package>
 </Wix>

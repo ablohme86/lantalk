@@ -32,6 +32,8 @@ add_library(lantalk_lib STATIC
     gui/appicon.h
     gui/dialogs.cpp
     gui/dialogs.h
+    gui/chatinput.cpp
+    gui/chatinput.h
     gui/chattab.cpp
     gui/chattab.h
     gui/mainwindow.cpp
@@ -39,6 +41,8 @@ add_library(lantalk_lib STATIC
 )
 
 target_include_directories(lantalk_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# The version shown in the window title; scripts/bump-version.sh updates it.
+target_compile_definitions(lantalk_lib PUBLIC LANTALK_VERSION="${PROJECT_VERSION}")
 
 target_link_libraries(lantalk_lib PUBLIC Qt6::Widgets Qt6::Network)
 

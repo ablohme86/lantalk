@@ -2,7 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- The GUI message input is a multi-line editor: `Shift+Enter` starts a new
+  line, pasted code keeps its line breaks and indentation, and the editor
+  grows up to six lines. The TUI shows multi-line messages on indented lines.
+- The GUI window title and the TUI menu bar show the version
+  (`LANTalk vX.Y.Z`).
+- The Windows MSI adds Start menu and desktop shortcuts with the LANTalk
+  icon; pass `DESKTOPSHORTCUT=0` to skip the desktop shortcut.
+
+### Fixed
+
+- The Windows MSI and ZIP of v1.1.0 left out Qt's `plugins` folder, so the
+  app failed with "no Qt platform plugin could be initialized". The packages
+  now keep Qt's install layout (`bin\lantalk.exe` next to `plugins\`), and
+  the release fails if the platform plugin is missing.
+- The MSI installs into `C:\Program Files\LANTalk` instead of a folder named
+  after both the manufacturer and the product.
+
 ### Changed
+
+- The typing notice reads `Name is typing a message...` and appears in the
+  TUI status line above the input instead of the chat pane's border.
 
 - Releases are built on self-hosted runners: Linux in a podman container
   (`packaging/ci`), Windows on a dedicated machine. Packages are uploaded

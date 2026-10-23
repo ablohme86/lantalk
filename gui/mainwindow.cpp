@@ -33,7 +33,8 @@
 #include <algorithm>
 
 MainWindow::MainWindow() {
-  setWindowTitle(QStringLiteral("LANTalk"));
+  setWindowTitle(QStringLiteral("LANTalk v%1").arg(
+      QCoreApplication::applicationVersion()));
   setWindowIcon(createAppIcon());
   resize(900, 600);
   auto *central = new QWidget(this);

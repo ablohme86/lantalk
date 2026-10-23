@@ -166,11 +166,17 @@ jobs:
 
           Remove-Item -Recurse -Force $stageDir, $appDir -ErrorAction SilentlyContinue
           cmake --install build --config Release --prefix $stageDir
+          # Keep Qt's whole install layout: bin\qt.conf points the app at the
+          # plugins\ folder next to bin\, which holds the platform plugin it
+          # cannot start without.
           New-Item -ItemType Directory -Force -Path $appDir | Out-Null
-          Copy-Item -Path (Join-Path $stageDir 'bin\*') -Destination $appDir -Recurse -Force
+          Copy-Item -Path (Join-Path $stageDir '*') -Destination $appDir -Recurse -Force
+          Copy-Item -Path README.md, LICENSE -Destination $appDir
 
-          if (-not (Test-Path (Join-Path $appDir 'lantalk.exe'))) {
-            throw 'The staged Windows app is missing lantalk.exe.'
+          foreach ($required in 'bin\lantalk.exe', 'bin\qt.conf', 'plugins\platforms\qwindows.dll') {
+            if (-not (Test-Path (Join-Path $appDir $required))) {
+              throw "The staged Windows app is missing $required."
+            }
           }
 
           Compress-Archive -Path (Join-Path $appDir '*') -DestinationPath $zipPath -CompressionLevel Optimal -Force

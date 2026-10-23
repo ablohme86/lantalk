@@ -9,7 +9,7 @@
 
 class ChatSession;
 class QLabel;
-class QLineEdit;
+class ChatInput;
 class QPushButton;
 class QStackedWidget;
 class QTextBrowser;
@@ -89,7 +89,7 @@ private:
   QStackedWidget *viewStack_;
   QTextBrowser *log_;
   ChatImagePreviewWidget *imageViewer_;
-  QLineEdit *input_;
+  ChatInput *input_;
   QPushButton *translateButton_;
   QTimer *reconnectTimer_;
   QString reconnectAddress_;

@@ -120,6 +120,7 @@ int main(int argc, char *argv[]) {
     QCoreApplication application(argc, argv);
     application.setOrganizationName(QStringLiteral("LANTalk"));
     application.setApplicationName(QStringLiteral("LANTalk"));
+    application.setApplicationVersion(QStringLiteral(LANTALK_VERSION));
     migrateLegacySettings();
     QLocalServer instanceServer;
     const auto instanceResult = startInstanceServer(instanceServer);
@@ -136,6 +137,7 @@ int main(int argc, char *argv[]) {
   QApplication application(argc, argv);
   application.setOrganizationName(QStringLiteral("LANTalk"));
   application.setApplicationName(QStringLiteral("LANTalk"));
+  application.setApplicationVersion(QStringLiteral(LANTALK_VERSION));
   migrateLegacySettings();
   auto font = application.font();
   const int configuredFontSize =

@@ -33,9 +33,17 @@ configured Ollama server is reachable and has the configured model; while the
 server is unavailable, LANTalk retries every 30 seconds. Turning Live
 Translate off is remembered as well.
 
-When the other participant is composing a message, `Name is typing...` appears
-above the message input (in the GUI) or in the chat pane's bottom border (in
-the TUI). A draft left untouched for 60 seconds stops counting as typing.
+When the other participant is composing a message, `Name is typing a
+message...` appears above the message input: as a line above the input in the
+GUI, and in the status line in the TUI. A draft left untouched for 60 seconds
+stops counting as typing. Both participants need LANTalk (or LANChat v1.1.0
+or later) for typing notifications.
+
+The GUI message input is a multi-line editor: `Enter` sends, `Shift+Enter`
+starts a new line, and pasted text such as code keeps its line breaks and
+indentation. It grows to six lines and scrolls beyond that. The TUI shows
+multi-line messages with indented continuation lines. The GUI window title
+and the TUI menu bar show the LANTalk version.
 
 The app automatically selects the ANSI terminal interface when launched from
 an interactive terminal. It uses the desktop GUI otherwise. Pass `--tui` to
@@ -164,8 +172,11 @@ version, commits and tags `vX.Y.Z`, and publishes:
   `bin/lantalk`. Qt is bundled; the desktop GUI needs the X11 libraries
   `libxcb-cursor0` and `libxkbcommon-x11-0` (on Wayland it runs through
   XWayland).
-- `LanTalk-vX.Y.Z-windows-x64.msi` and a portable
-  `LanTalk-vX.Y.Z-windows-x64.zip`.
+- `LanTalk-vX.Y.Z-windows-x64.msi` installs into `C:\Program Files\LANTalk`
+  and adds Start menu and desktop shortcuts (`msiexec /i <msi>
+  DESKTOPSHORTCUT=0` skips the desktop one).
+- `LanTalk-vX.Y.Z-windows-x64.zip` is portable: extract it and run
+  `bin\lantalk.exe`.
 
 Pushing a `vX.Y.Z` tag yourself publishes that version without bumping it. The
 release notes come from the matching `CHANGELOG.md` section plus GitHub's

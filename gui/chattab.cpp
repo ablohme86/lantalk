@@ -1,6 +1,7 @@
 #include "gui/chattab.h"
 
 #include "appconfig.h"
+#include "gui/chatinput.h"
 #include "gui/dialogs.h"
 #include "protocol/chathistory.h"
 #include "protocol/chatsession.h"
@@ -16,11 +17,11 @@
 #include <QFont>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPixmap>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QResizeEvent>
 #include <QSettings>
 #include <QSaveFile>
@@ -123,7 +124,9 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   typingAnimation_ = new QTimer(this);
   typingAnimation_->setInterval(400);
   auto *controls = new QHBoxLayout;
-  input_ = new QLineEdit(this);
+  input_ = new ChatInput(this);
+  input_->setPlaceholderText(
+      QStringLiteral("Message (Shift+Enter for a new line)"));
   translateButton_ = new QPushButton(QStringLiteral("Live Translate"), this);
   translateButton_->setCheckable(true);
   reconnectTimer_ = new QTimer(this);
@@ -153,10 +156,10 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       session_->sendFile(path);
     }
   });
-  connect(input_, &QLineEdit::returnPressed, this, &ChatTab::send);
+  connect(input_, &ChatInput::returnPressed, this, &ChatTab::send);
   // textEdited only fires for user edits, not for the status texts this tab
   // places in the input.
-  connect(input_, &QLineEdit::textEdited, this, [this](const QString &text) {
+  connect(input_, &ChatInput::textEdited, this, [this](const QString &text) {
     session_->noteLocalTyping(!text.trimmed().isEmpty());
   });
   connect(session_, &ChatSession::peerTypingChanged, this,
@@ -412,7 +415,8 @@ void ChatTab::updateTypingIndicator() {
   // Pad the dots so the label width stays constant while animating.
   const auto dots = QString(typingAnimationFrame_, u'.')
                         .leftJustified(3, QChar(0x2007));
-  typingIndicator_->setText(QStringLiteral("%1 is typing%2").arg(peer, dots));
+  typingIndicator_->setText(
+      QStringLiteral("%1 is typing a message%2").arg(peer, dots));
   typingIndicator_->show();
   if (!typingAnimation_->isActive()) typingAnimation_->start();
 }
@@ -473,8 +477,12 @@ void ChatTab::send() {
   if (fileSendUiActive_) {
     return;
   }
-  const auto text = input_->text().trimmed();
-  if (text.isEmpty() || outgoingPending_) {
+  // Surrounding blank lines and trailing spaces go; the indentation of
+  // pasted code stays.
+  auto text = input_->text();
+  text.remove(QRegularExpression(QStringLiteral("^(\\s*\\n)+")));
+  text.remove(QRegularExpression(QStringLiteral("\\s+$")));
+  if (text.trimmed().isEmpty() || outgoingPending_) {
     return;
   }
   input_->clear();

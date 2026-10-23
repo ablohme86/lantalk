@@ -1186,7 +1186,12 @@ void TerminalUi::appendTranscript(int index, const QString &line)
 {
     if (index >= 0 && index < conversations_.size()) {
         auto &lines = conversations_[index].transcript;
-        lines.append({sanitize(line), false, false});
+        // Multi-line messages continue on indented lines.
+        const auto parts = line.split(u'\n');
+        for (int part = 0; part < parts.size(); ++part) {
+            lines.append({sanitize(part == 0 ? parts.at(part) : QStringLiteral("    ") + parts.at(part)),
+                          false, false});
+        }
         if (lines.size() > 200) lines.remove(0, lines.size() - 200);
     }
     redraw();
@@ -1203,10 +1208,14 @@ void TerminalUi::loadConversationHistory(int index)
     const auto entries = ChatHistory::load(conversation.session->peerAddress(),
                                            conversation.session->peerName(), 20);
     for (const auto &entry : entries) {
-        conversation.transcript.append(
-            {sanitize(ChatHistory::timestampPrefix(entry.timestamp) +
-                      QStringLiteral("%1: %2").arg(entry.sender, entry.message)),
-             true, false});
+        const auto parts = entry.message.split(u'\n');
+        for (int part = 0; part < parts.size(); ++part) {
+            conversation.transcript.append(
+                {sanitize(part == 0 ? ChatHistory::timestampPrefix(entry.timestamp)
+                                          + QStringLiteral("%1: %2").arg(entry.sender, parts.at(part))
+                                    : QStringLiteral("    ") + parts.at(part)),
+                 true, false});
+        }
     }
     if (!entries.isEmpty()) {
         conversation.transcript.append(
@@ -1343,8 +1352,9 @@ void TerminalUi::redraw()
                    + styledLabel(menuTitles().at(menu)) + u' ' + MenuBarStyle + u' ';
         menuBarWidth += labelWidth(menuTitles().at(menu)) + 3;
     }
-    QString menuHint = QStringLiteral("Alt-C / Alt-S   LANTalk ");
-    if (menuBarWidth + displayWidth(menuHint) > terminalColumns_) menuHint = QStringLiteral("LANTalk ");
+    const QString appTitle = QStringLiteral("LANTalk v%1 ").arg(QCoreApplication::applicationVersion());
+    QString menuHint = QStringLiteral("Alt-C / Alt-S   ") + appTitle;
+    if (menuBarWidth + displayWidth(menuHint) > terminalColumns_) menuHint = appTitle;
     if (menuBarWidth + displayWidth(menuHint) > terminalColumns_) menuHint.clear();
     menuBar += QString(std::max(0, terminalColumns_ - menuBarWidth - displayWidth(menuHint)), u' ') + menuHint;
     terminalOutput << menuBar << "\x1b[0m\x1b[K\n";
@@ -1480,19 +1490,15 @@ void TerminalUi::redraw()
     const bool peerTyping = currentConversation_ >= 0 && currentConversation_ < conversations_.size()
                             && !conversations_.at(currentConversation_).disconnected
                             && conversations_.at(currentConversation_).session->peerTyping();
-    if (peerTyping) {
-        // Shown in the chat pane's bottom border, just above the input line.
-        const auto *session = conversations_.at(currentConversation_).session;
-        const QString label = elide(QStringLiteral(" %1 is typing... ").arg(session->peerName()),
-                                    std::max(0, mainWidth - 3));
-        terminalOutput << "\x1b[1;34m└" << QString(std::max(0, sidebar - 1), u'─') << "┴─\x1b[0m"
-                       << "\x1b[2;3;37m" << label << "\x1b[0m\x1b[1;34m"
-                       << QString(std::max(0, mainWidth - 2 - displayWidth(label)), u'─')
-                       << "┘\x1b[0m\x1b[K\n";
-    } else {
-        terminalOutput << "\x1b[1;34m" << bottom << "\x1b[0m\x1b[K\n";
-    }
-    terminalOutput << "\x1b[30;46m" << elide(QStringLiteral(" %1").arg(status_), terminalColumns_)
+    terminalOutput << "\x1b[1;34m" << bottom << "\x1b[0m\x1b[K\n";
+    // The typing notice takes the status line above the input while it lasts;
+    // the regular status returns when the peer stops typing.
+    const QString statusText =
+        peerTyping ? QStringLiteral("%1 is typing a message...")
+                         .arg(conversations_.at(currentConversation_).session->peerName())
+                   : status_;
+    terminalOutput << "\x1b[30;46m" << (peerTyping ? "\x1b[3m" : "")
+                   << elide(QStringLiteral(" %1").arg(statusText), terminalColumns_)
                    << "\x1b[0m\x1b[K\n";
     terminalOutput << "\x1b[1;32m> \x1b[0m" << elide(input_, terminalColumns_ - 2) << "\x1b[K";
     if (openMenu_ != Menu::None) drawMenu(openMenuColumn);
