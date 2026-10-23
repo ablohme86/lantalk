@@ -18,6 +18,8 @@
 
 ### Changed
 
+- Chat messages are sent with Enter; the Send button has been removed from the
+  chat input row.
 - The GUI menu bar now has a File menu with Exit LanChat and a Connect... action
   that opens the connection dialog.
 - GUI attachments always start on a new line. Image thumbnails appear in the
