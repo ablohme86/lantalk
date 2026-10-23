@@ -22,6 +22,8 @@
   closes, and include a `Save as...` link. Sent attachments show only the
   filename, and outgoing messages use the `You` label.
 - Live Translate status messages identify the peer who enabled or disabled it.
+- The GUI host list shows `Scanning for hosts...` until its initial network scan
+  completes.
 - Starting LANChat again activates the existing process instead of opening a
   second UI.
 

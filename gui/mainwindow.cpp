@@ -257,6 +257,13 @@ void MainWindow::startDiscovery() {
   probeSendTimer_.setInterval(10);
   connect(&probeSendTimer_, &QTimer::timeout, this,
           &MainWindow::sendDiscoveryProbeBatch);
+  discoverySettleTimer_.setSingleShot(true);
+  connect(&discoverySettleTimer_, &QTimer::timeout, this, [this] {
+    initialDiscoveryScanComplete_ = true;
+    if (discoveredHosts_.isEmpty()) {
+      host_->setPlaceholderText(QStringLiteral("No LANChat hosts found"));
+    }
+  });
   subnetScanTimer_.setInterval(5000);
   connect(&subnetScanTimer_, &QTimer::timeout, this,
           &MainWindow::scanPrivateSubnets);
@@ -362,9 +369,17 @@ void MainWindow::scanPrivateSubnets() {
   discoveredHostExpiryMs_ =
       PeerDiscovery::peerExpiryMilliseconds(targets.size());
   if (targets.isEmpty()) {
+    if (!initialDiscoveryScanComplete_) {
+      initialDiscoveryScanComplete_ = true;
+      host_->setPlaceholderText(QStringLiteral("No LANChat hosts found"));
+    }
     return;
   }
 
+  if (!initialDiscoveryScanComplete_) {
+    host_->setPlaceholderText(QStringLiteral("Scanning for hosts..."));
+    discoverySettleTimer_.stop();
+  }
   for (const auto &target : targets) {
     pendingDiscoveryProbes_.enqueue(target);
   }
@@ -382,6 +397,9 @@ void MainWindow::sendDiscoveryProbeBatch() {
   }
   if (pendingDiscoveryProbes_.isEmpty()) {
     probeSendTimer_.stop();
+    if (!initialDiscoveryScanComplete_) {
+      discoverySettleTimer_.start(1000);
+    }
   }
 }
 
@@ -395,7 +413,10 @@ void MainWindow::refreshHostList() {
   const QSignalBlocker blocker(host_);
   host_->clear();
   if (hosts.isEmpty()) {
-    host_->setPlaceholderText(QStringLiteral("No LANChat hosts found"));
+    host_->setPlaceholderText(
+        initialDiscoveryScanComplete_
+            ? QStringLiteral("No LANChat hosts found")
+            : QStringLiteral("Scanning for hosts..."));
     return;
   }
   host_->addItem(QStringLiteral("Select a host to chat with"));

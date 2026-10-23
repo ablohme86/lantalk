@@ -62,7 +62,9 @@ private:
   QTimer discoveryTimer_;
   QTimer subnetScanTimer_;
   QTimer probeSendTimer_;
+  QTimer discoverySettleTimer_;
   QQueue<QHostAddress> pendingDiscoveryProbes_;
+  bool initialDiscoveryScanComplete_ = false;
   int discoveredHostExpiryMs_ = 7000;
   const QString discoveryId_ =
       QUuid::createUuid().toString(QUuid::WithoutBraces);
