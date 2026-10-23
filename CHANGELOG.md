@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.3.0 - 2026-10-23
+
 ### Added
 
 - Quotes: pasting several lines or a long text adds it as a quote, shown as a
