@@ -10,7 +10,7 @@
 
 QIcon createAppIcon(int unreadCount) {
   QIcon icon;
-  for (const int size : {16, 24, 32, 48, 64, 128}) {
+  for (const int size : {16, 24, 32, 48, 64, 128, 256}) {
     QPixmap pixmap(size, size);
     pixmap.fill(Qt::transparent);
 

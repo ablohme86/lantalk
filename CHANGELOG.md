@@ -4,6 +4,8 @@
 
 ### Added
 
+- The Windows executable now embeds the LANChat app icon as a native Windows
+  resource.
 - Pushing a `vX.Y.Z` tag now builds a Windows x64 release and publishes both a
   portable ZIP and an MSI installer to a GitHub Release.
 - GUI and TUI discovery now probe private IPv4 subnets with unicast UDP, so

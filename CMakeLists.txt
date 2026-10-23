@@ -37,6 +37,13 @@ set_target_properties(lanchat PROPERTIES
     MACOSX_BUNDLE TRUE
 )
 
+if(WIN32)
+    enable_language(RC)
+    file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/resources/lanchat.ico" LANCHAT_ICON_PATH)
+    configure_file(resources/lanchat.rc.in ${CMAKE_CURRENT_BINARY_DIR}/lanchat.rc @ONLY)
+    target_sources(lanchat PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/lanchat.rc)
+endif()
+
 install(TARGETS lanchat BUNDLE DESTINATION . RUNTIME DESTINATION bin)
 
 qt_generate_deploy_app_script(
