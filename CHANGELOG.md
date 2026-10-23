@@ -15,3 +15,5 @@
 ### Fixed
 
 - The TUI no longer prints the connection confirmation twice.
+- GUI attachments always start on a new line, and image previews open in a
+  full-screen viewer with a close button when clicked.

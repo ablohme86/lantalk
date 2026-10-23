@@ -5,6 +5,7 @@
 #include "protocol/chatsession.h"
 
 #include <QDragEnterEvent>
+#include <QDialog>
 #include <QDropEvent>
 #include <QFont>
 #include <QHBoxLayout>
@@ -12,20 +13,61 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPixmap>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSignalBlocker>
-#include <QTextEdit>
+#include <QTextBlock>
+#include <QTextBrowser>
 #include <QTextImageFormat>
 #include <QUrl>
 #include <QVBoxLayout>
+
+namespace {
+
+class ImagePreviewDialog final : public QDialog {
+public:
+  explicit ImagePreviewDialog(const QPixmap &image, QWidget *parent = nullptr)
+      : QDialog(parent), image_(image), imageLabel_(new QLabel(this)) {
+    setWindowTitle(QStringLiteral("Image preview"));
+    setStyleSheet(QStringLiteral("background-color: #111; color: white;"));
+
+    auto *layout = new QVBoxLayout(this);
+    auto *header = new QHBoxLayout;
+    header->addStretch();
+    auto *closeButton = new QPushButton(QStringLiteral("Close"), this);
+    header->addWidget(closeButton);
+    layout->addLayout(header);
+
+    imageLabel_->setAlignment(Qt::AlignCenter);
+    layout->addWidget(imageLabel_, 1);
+    connect(closeButton, &QPushButton::clicked, this, &QDialog::accept);
+  }
+
+protected:
+  void resizeEvent(QResizeEvent *event) override {
+    QDialog::resizeEvent(event);
+    imageLabel_->setPixmap(image_.scaled(imageLabel_->size(),
+                                         Qt::KeepAspectRatio,
+                                         Qt::SmoothTransformation));
+  }
+
+private:
+  QPixmap image_;
+  QLabel *imageLabel_;
+};
+
+} // namespace
 
 ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     : QWidget(parent), session_(session) {
   setAcceptDrops(true);
   auto *layout = new QVBoxLayout(this);
   status_ = new QLabel(QStringLiteral("Performing nickname handshake…"), this);
-  log_ = new QTextEdit(this);
+  log_ = new QTextBrowser(this);
   log_->setReadOnly(true);
+  log_->setOpenLinks(false);
+  log_->setOpenExternalLinks(false);
   auto *controls = new QHBoxLayout;
   input_ = new QLineEdit(this);
   translateButton_ = new QPushButton(QStringLiteral("Live Translate"), this);
@@ -51,6 +93,19 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     }
   });
   connect(session_, &ChatSession::statusChanged, status_, &QLabel::setText);
+  connect(log_, &QTextBrowser::anchorClicked, this, [this](const QUrl &url) {
+    const auto path = url.toLocalFile();
+    if (path.isEmpty()) {
+      return;
+    }
+    const QPixmap image(path);
+    if (image.isNull()) {
+      return;
+    }
+    ImagePreviewDialog dialog(image, this);
+    dialog.setWindowState(dialog.windowState() | Qt::WindowFullScreen);
+    dialog.exec();
+  });
   connect(session_, &ChatSession::messageReceived, this, &ChatTab::received);
   connect(
       session_, &ChatSession::fileSent, this,
@@ -284,14 +339,28 @@ void ChatTab::clearOutgoingTranslationStatus() {
 
 void ChatTab::appendFile(const QString &sender, const QString &name,
                          const QString &path, const QString &mimeType) {
-  log_->append(QStringLiteral("<b>%1:</b> sent <i>%2</i>")
-                   .arg(sender.toHtmlEscaped(), name.toHtmlEscaped()));
+  auto cursor = log_->textCursor();
+  cursor.movePosition(QTextCursor::End);
+  if (!cursor.block().text().isEmpty()) {
+    cursor.insertBlock();
+  }
+  QTextCharFormat senderFormat;
+  senderFormat.setFontWeight(QFont::Bold);
+  cursor.insertText(sender + QStringLiteral(": sent "), senderFormat);
+  QTextCharFormat nameFormat;
+  nameFormat.setFontItalic(true);
+  cursor.insertText(name, nameFormat);
+  cursor.insertBlock();
+
   if (mimeType.startsWith(QStringLiteral("image/"))) {
-    auto cursor = log_->textCursor();
     QTextImageFormat image;
     image.setName(QUrl::fromLocalFile(path).toString());
     image.setWidth(360);
+    image.setAnchor(true);
+    image.setAnchorHref(QUrl::fromLocalFile(path).toString());
+    image.setToolTip(QStringLiteral("Click to view full screen"));
     cursor.insertImage(image);
     cursor.insertBlock();
   }
+  log_->setTextCursor(cursor);
 }
