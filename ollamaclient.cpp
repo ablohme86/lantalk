@@ -19,7 +19,7 @@ void OllamaClient::translate(const QString &text, const QString &sourceLanguage,
         model = QString::fromLatin1(DefaultOllamaModel);
     }
     if (endpoint.trimmed().isEmpty() || model.trimmed().isEmpty()) {
-        emit failed(QStringLiteral("Configure an Ollama URL and model in Settings before using Live Translate."));
+        emit failed(QStringLiteral("Configure an Ollama URL and model in Settings before using Live Translate."), text);
         return;
     }
 
@@ -43,14 +43,14 @@ void OllamaClient::translate(const QString &text, const QString &sourceLanguage,
         if (error != QNetworkReply::NoError) {
             const auto serverError = QJsonDocument::fromJson(body).object().value(QStringLiteral("error")).toString();
             emit failed(QStringLiteral("Ollama request failed: %1").arg(
-                serverError.isEmpty() ? errorText : serverError));
+                serverError.isEmpty() ? errorText : serverError), text);
             return;
         }
         QJsonParseError parseError;
         const auto document = QJsonDocument::fromJson(body, &parseError);
         const auto translation = document.object().value(QStringLiteral("response")).toString();
         if (parseError.error != QJsonParseError::NoError || translation.isEmpty()) {
-            emit failed(QStringLiteral("Ollama returned an invalid translation response."));
+            emit failed(QStringLiteral("Ollama returned an invalid translation response."), text);
             return;
         }
         emit translated(translation.trimmed(), text);

@@ -4,6 +4,7 @@
 #include "protocol/chatsession.h"
 
 #include <QCoreApplication>
+#include <QPointer>
 #include <QSettings>
 #include <QSocketNotifier>
 #include <QTextStream>
@@ -70,7 +71,8 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
     if (!ansi_) {
         print(QStringLiteral("LANChat terminal mode\n"
                              "Commands: /help, /hosts, /connect <host|number> [port], /tabs, "
-                             "/use <tab>, /close [tab], /nick <name>, /quit"));
+                             "/use <tab>, /close [tab], /nick <name>, /translate <my language> | "
+                             "<peer language>, /stoptranslate, /quit"));
         printPrompt();
         return;
     }
@@ -228,12 +230,7 @@ void TerminalUi::handleInput()
         if (text.startsWith(u'/')) {
             handleCommand(text);
         } else if (!text.isEmpty()) {
-            if (currentConversation_ < 0 || currentConversation_ >= conversations_.size()) {
-                print(QStringLiteral("No active conversation. Use /hosts then /connect <host>."));
-            } else {
-                conversations_.at(currentConversation_).session->sendMessage(text);
-                appendTranscript(currentConversation_, QStringLiteral("me: %1").arg(text));
-            }
+            sendChatMessage(text);
         }
         printPrompt();
         return;
@@ -358,8 +355,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                 handleCommand(text);
             } else if (!text.isEmpty() && currentConversation_ >= 0
                        && currentConversation_ < conversations_.size()) {
-                conversations_.at(currentConversation_).session->sendMessage(text);
-                appendTranscript(currentConversation_, QStringLiteral("me: %1").arg(text));
+                sendChatMessage(text);
             } else if (!text.isEmpty()) {
                 status_ = QStringLiteral("Select a host and press Enter to connect.");
             }
@@ -381,7 +377,8 @@ void TerminalUi::handleCommand(const QString &command)
     const QString name = parts.value(0).toLower();
     if (name == QStringLiteral("/help")) {
         print(QStringLiteral("/hosts, /connect <host|number> [port], /tabs, /use <tab>, /close [tab], "
-                             "/nick <name>, /quit. In the full-screen UI use Tab and arrows."));
+                             "/nick <name>, /translate <my language> | <peer language>, "
+                             "/stoptranslate, /quit. In the full-screen UI use Tab and arrows."));
     } else if (name == QStringLiteral("/hosts")) {
         focus_ = Focus::Hosts;
         printHosts();
@@ -437,6 +434,41 @@ void TerminalUi::handleCommand(const QString &command)
         QSettings().setValue(QStringLiteral("profile/nickname"), newNickname);
         announcePresence();
         print(QStringLiteral("Nickname changed to %1. New connections will use it.").arg(newNickname));
+    } else if (name == QStringLiteral("/translate")) {
+        if (currentConversation_ < 0 || currentConversation_ >= conversations_.size()) {
+            setStatus(QStringLiteral("Open a conversation before enabling Live Translate."));
+            return;
+        }
+        if (!isOllamaConfigured()) {
+            setStatus(QStringLiteral("Configure an Ollama URL and model in Settings first."));
+            return;
+        }
+        const auto languagePair = command.mid(name.size()).trimmed().split(u'|');
+        if (languagePair.size() != 2) {
+            setStatus(QStringLiteral("Usage: /translate <my language> | <peer language>"));
+            return;
+        }
+        const auto myLanguage = languagePair.at(0).trimmed();
+        const auto peerLanguage = languagePair.at(1).trimmed();
+        const auto availableLanguages = languages();
+        if (!availableLanguages.contains(myLanguage) || !availableLanguages.contains(peerLanguage)) {
+            setStatus(QStringLiteral("Languages: %1").arg(availableLanguages.join(QStringLiteral(", "))));
+            return;
+        }
+        auto &conversation = conversations_[currentConversation_];
+        conversation.myLanguage = myLanguage;
+        conversation.peerLanguage = peerLanguage;
+        conversation.session->requestLiveTranslation(myLanguage, peerLanguage);
+        setStatus(QStringLiteral("Requesting Live Translate…"));
+    } else if (name == QStringLiteral("/stoptranslate")) {
+        if (currentConversation_ < 0 || currentConversation_ >= conversations_.size()) {
+            setStatus(QStringLiteral("There is no active conversation."));
+            return;
+        }
+        auto &conversation = conversations_[currentConversation_];
+        conversation.liveTranslate = false;
+        conversation.session->stopLiveTranslation();
+        setStatus(QStringLiteral("Live Translate is off."));
     } else if (name == QStringLiteral("/quit") || name == QStringLiteral("/exit")) {
         QCoreApplication::quit();
     } else {
@@ -610,18 +642,84 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
             return;
         }
     });
-    connect(session, &ChatSession::messageReceived, this, [this, session](const QString &message, const QString &) {
-        const int index = std::find_if(conversations_.cbegin(), conversations_.cend(),
-                                       [session](const Conversation &item) { return item.session == session; })
-                          - conversations_.cbegin();
-        if (index < conversations_.size()) appendTranscript(index, QStringLiteral("%1: %2").arg(session->peerName(), message));
-    });
+    connect(session, &ChatSession::messageReceived, this,
+            [this, session](const QString &message, const QString &) {
+                const int index = conversationIndex(session);
+                if (index < 0) return;
+                const auto &conversation = conversations_.at(index);
+                if (!conversation.liveTranslate) {
+                    appendTranscript(index,
+                                     QStringLiteral("%1: %2").arg(session->peerName(), message));
+                    return;
+                }
+
+                const auto myLanguage = conversation.myLanguage;
+                const auto peerLanguage = conversation.peerLanguage;
+                const QPointer<ChatSession> safeSession(session);
+                auto *translator = new OllamaClient(this);
+                ++pendingIncomingTranslations_;
+                setStatus(QStringLiteral("Translating incoming message... Stand by."));
+                connect(translator, &OllamaClient::translated, this,
+                        [this, safeSession, translator](const QString &translation,
+                                                        const QString &) {
+                            if (safeSession) {
+                                const int conversation = conversationIndex(safeSession);
+                                if (conversation >= 0) {
+                                    appendTranscript(conversation,
+                                                     QStringLiteral("%1: %2")
+                                                         .arg(safeSession->peerName(), translation));
+                                }
+                            }
+                            --pendingIncomingTranslations_;
+                            updateTranslationStatus(safeSession
+                                                        ? QStringLiteral("Incoming message translated.")
+                                                        : QStringLiteral("Incoming translation finished; conversation closed."));
+                            translator->deleteLater();
+                        });
+                connect(translator, &OllamaClient::failed, this,
+                        [this, safeSession, translator, message](const QString &error,
+                                                                 const QString &) {
+                            if (safeSession) {
+                                const int conversation = conversationIndex(safeSession);
+                                if (conversation >= 0) {
+                                    appendTranscript(conversation,
+                                                     QStringLiteral("%1: %2")
+                                                         .arg(safeSession->peerName(), message));
+                                }
+                            }
+                            --pendingIncomingTranslations_;
+                            updateTranslationStatus(error);
+                            translator->deleteLater();
+                        });
+                translator->translate(message, peerLanguage, myLanguage);
+            });
     connect(session, &ChatSession::statusChanged, this, [this, session](const QString &message) {
-        const int index = std::find_if(conversations_.cbegin(), conversations_.cend(),
-                                       [session](const Conversation &item) { return item.session == session; })
-                          - conversations_.cbegin();
-        if (index < conversations_.size()) appendTranscript(index, QStringLiteral("* %1").arg(message));
+        const int index = conversationIndex(session);
+        if (index >= 0) appendTranscript(index, QStringLiteral("* %1").arg(message));
+        setStatus(message);
     });
+    connect(session, &ChatSession::liveTranslationGranted, this, [this, session] {
+        const int index = conversationIndex(session);
+        if (index < 0) return;
+        auto &conversation = conversations_[index];
+        conversation.liveTranslate = true;
+        setStatus(QStringLiteral("Live Translate: %1 ↔ %2")
+                      .arg(conversation.myLanguage, conversation.peerLanguage));
+    });
+    connect(session, &ChatSession::liveTranslationDenied, this,
+            [this, session](const QString &message) {
+                const int index = conversationIndex(session);
+                if (index >= 0) conversations_[index].liveTranslate = false;
+                setStatus(message);
+            });
+    connect(session, &ChatSession::peerLiveTranslationChanged, this,
+            [this](bool active, const QString &sourceLanguage,
+                   const QString &targetLanguage) {
+                setStatus(active
+                              ? QStringLiteral("The other user enabled Live Translate (%1 → %2).")
+                                    .arg(sourceLanguage, targetLanguage)
+                              : QStringLiteral("The other user disabled Live Translate."));
+            });
     connect(session, &ChatSession::fileReceived, this, [this, session](const QString &name, const QString &path, const QString &) {
         const int index = std::find_if(conversations_.cbegin(), conversations_.cend(),
                                        [session](const Conversation &item) { return item.session == session; })
@@ -629,10 +727,9 @@ void TerminalUi::addSession(QTcpSocket *socket, const QString &title)
         if (index < conversations_.size()) appendTranscript(index, QStringLiteral("* %1 sent %2 (%3)").arg(session->peerName(), name, path));
     });
     connect(session, &ChatSession::disconnected, this, [this, session] {
-        const int index = std::find_if(conversations_.cbegin(), conversations_.cend(),
-                                       [session](const Conversation &item) { return item.session == session; })
-                          - conversations_.cbegin();
-        if (index < conversations_.size()) appendTranscript(index, QStringLiteral("* Disconnected."));
+        const int index = conversationIndex(session);
+        if (index >= 0) appendTranscript(index, QStringLiteral("* Disconnected."));
+        setStatus(QStringLiteral("Disconnected."));
     });
     session->beginHandshake(nickname());
     print(QStringLiteral("Opened tab %1: %2").arg(index + 1).arg(title));
@@ -649,6 +746,78 @@ void TerminalUi::closeConversation(int index)
     else if (currentConversation_ >= conversations_.size()) currentConversation_ = conversations_.size() - 1;
     else if (index < currentConversation_) --currentConversation_;
     print(QStringLiteral("Closed tab %1.").arg(index + 1));
+}
+
+void TerminalUi::sendChatMessage(const QString &text)
+{
+    if (currentConversation_ < 0 || currentConversation_ >= conversations_.size()) {
+        setStatus(QStringLiteral("No active conversation. Use /hosts then /connect <host>."));
+        return;
+    }
+    auto &conversation = conversations_[currentConversation_];
+    if (!conversation.liveTranslate) {
+        conversation.session->sendMessage(text);
+        appendTranscript(currentConversation_, QStringLiteral("me: %1").arg(text));
+        return;
+    }
+
+    const QPointer<ChatSession> session(conversation.session);
+    auto *translator = new OllamaClient(this);
+    ++pendingOutgoingTranslations_;
+    setStatus(QStringLiteral("Translating message..."));
+    connect(translator, &OllamaClient::translated, this,
+            [this, session, translator](const QString &translation,
+                                        const QString &originalMessage) {
+                if (session) {
+                    const int index = conversationIndex(session);
+                    if (index >= 0) {
+                        session->sendMessage(translation, originalMessage);
+                        appendTranscript(index,
+                                         QStringLiteral("me: %1").arg(originalMessage));
+                    }
+                }
+                --pendingOutgoingTranslations_;
+                updateTranslationStatus(session ? QStringLiteral("Message translated and sent.")
+                                                 : QStringLiteral("Translation finished; conversation closed."));
+                translator->deleteLater();
+            });
+    connect(translator, &OllamaClient::failed, this,
+            [this, translator](const QString &error, const QString &) {
+                --pendingOutgoingTranslations_;
+                updateTranslationStatus(error);
+                translator->deleteLater();
+            });
+    translator->translate(text, conversation.myLanguage, conversation.peerLanguage);
+}
+
+void TerminalUi::setStatus(const QString &message)
+{
+    status_ = sanitize(message).replace(u'\n', QStringLiteral(" | "));
+    if (ansi_) {
+        redraw();
+    } else {
+        terminalOutput << "\r\n" << status_ << "\n" << Qt::flush;
+    }
+}
+
+void TerminalUi::updateTranslationStatus(const QString &idleMessage)
+{
+    if (pendingIncomingTranslations_ > 0) {
+        setStatus(QStringLiteral("Translating incoming message... Stand by."));
+    } else if (pendingOutgoingTranslations_ > 0) {
+        setStatus(QStringLiteral("Translating message..."));
+    } else {
+        setStatus(idleMessage);
+    }
+}
+
+int TerminalUi::conversationIndex(ChatSession *session) const
+{
+    const auto found = std::find_if(conversations_.cbegin(), conversations_.cend(),
+                                    [session](const Conversation &conversation) {
+                                        return conversation.session == session;
+                                    });
+    return found == conversations_.cend() ? -1 : int(found - conversations_.cbegin());
 }
 
 QList<TerminalUi::DiscoveredHost> TerminalUi::sortedHosts() const

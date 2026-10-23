@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ollamaclient.h"
+
 #include <QDateTime>
 #include <QHash>
 #include <QList>
@@ -36,6 +38,9 @@ private:
     ChatSession *session;
     QString title;
     QStringList transcript;
+    bool liveTranslate = false;
+    QString myLanguage;
+    QString peerLanguage;
   };
 
   enum class Focus { Hosts, Chat, Menu };
@@ -63,6 +68,10 @@ private:
   void acceptConnection();
   void addSession(QTcpSocket *socket, const QString &title);
   void closeConversation(int index);
+  void sendChatMessage(const QString &text);
+  void setStatus(const QString &message);
+  void updateTranslationStatus(const QString &idleMessage);
+  int conversationIndex(ChatSession *session) const;
   QList<DiscoveredHost> sortedHosts() const;
   void appendTranscript(int index, const QString &line);
   void redraw();
@@ -98,6 +107,8 @@ private:
   QString dialogPrompt_;
   QString dialogInput_;
   QString status_;
+  int pendingOutgoingTranslations_ = 0;
+  int pendingIncomingTranslations_ = 0;
   bool ansi_ = false;
   bool rawMode_ = false;
   int terminalRows_ = 0;

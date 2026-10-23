@@ -1,19 +1,24 @@
 #include "gui/mainwindow.h"
 
 #include "appconfig.h"
+#include "gui/appicon.h"
 #include "gui/chattab.h"
 #include "gui/dialogs.h"
 #include "protocol/chatsession.h"
 
 #include <QAction>
+#include <QApplication>
 #include <QComboBox>
+#include <QGuiApplication>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QMenu>
 #include <QMenuBar>
 #include <QPalette>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStatusBar>
+#include <QSystemTrayIcon>
 #include <QTabWidget>
 #include <QTcpSocket>
 #include <QVBoxLayout>
@@ -23,6 +28,7 @@
 
 MainWindow::MainWindow() {
   setWindowTitle(QStringLiteral("LANChat"));
+  setWindowIcon(createAppIcon());
   resize(900, 600);
   auto *central = new QWidget(this);
   auto *layout = new QVBoxLayout(central);
@@ -41,6 +47,7 @@ MainWindow::MainWindow() {
   connect(connectToAction, &QAction::triggered, this,
           &MainWindow::showConnectDialog);
   connect(settingsAction, &QAction::triggered, this, &MainWindow::showSettings);
+  setupTrayIcon();
   connect(host_, QOverload<int>::of(&QComboBox::activated), this,
           [this](int index) {
             if (!host_->itemData(index).toMap().isEmpty()) {
@@ -70,6 +77,62 @@ void MainWindow::showSettings() {
     static_cast<ChatTab *>(tabs_->widget(index))
         ->refreshTranslationAvailability();
   }
+}
+
+void MainWindow::setupTrayIcon() {
+  trayIcon_ = new QSystemTrayIcon(this);
+  auto *menu = new QMenu(this);
+  auto *openAction = menu->addAction(QStringLiteral("Open LANChat"));
+  menu->addSeparator();
+  auto *quitAction = menu->addAction(QStringLiteral("Quit"));
+  trayIcon_->setContextMenu(menu);
+  connect(openAction, &QAction::triggered, this, &MainWindow::showFromTray);
+  connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);
+  connect(trayIcon_, &QSystemTrayIcon::activated, this,
+          [this](QSystemTrayIcon::ActivationReason reason) {
+            if (reason == QSystemTrayIcon::Trigger ||
+                reason == QSystemTrayIcon::DoubleClick) {
+              showFromTray();
+            }
+          });
+  connect(qApp, &QGuiApplication::applicationStateChanged, this,
+          [this](Qt::ApplicationState state) {
+            if (state == Qt::ApplicationActive && unreadMessageCount_ > 0) {
+              unreadMessageCount_ = 0;
+              updateTrayIcon();
+            }
+          });
+  updateTrayIcon();
+  trayIcon_->show();
+}
+
+void MainWindow::updateTrayIcon() {
+  if (!trayIcon_) return;
+  trayIcon_->setIcon(createAppIcon(unreadMessageCount_));
+  if (unreadMessageCount_ == 0) {
+    trayIcon_->setToolTip(QStringLiteral("LANChat"));
+    return;
+  }
+  trayIcon_->setToolTip(
+      QStringLiteral("LANChat — %1 unread message%2")
+          .arg(unreadMessageCount_)
+          .arg(unreadMessageCount_ == 1 ? QString() : QStringLiteral("s")));
+}
+
+void MainWindow::showFromTray() {
+  if (isMinimized()) showNormal();
+  else show();
+  raise();
+  activateWindow();
+}
+
+void MainWindow::noteIncomingMessage() {
+  if (QGuiApplication::applicationState() == Qt::ApplicationActive &&
+      isVisible() && !isMinimized()) {
+    return;
+  }
+  ++unreadMessageCount_;
+  updateTrayIcon();
 }
 
 void MainWindow::connectToHost() {
@@ -270,6 +333,8 @@ void MainWindow::addSession(QTcpSocket *socket, const QString &initialTitle) {
   auto *tab = new ChatTab(session, tabs_);
   const auto index = tabs_->addTab(tab, initialTitle);
   tabs_->setCurrentIndex(index);
+  connect(session, &ChatSession::messageReceived, this,
+          [this](const QString &, const QString &) { noteIncomingMessage(); });
   connect(session, &ChatSession::peerIdentified, tab,
           [this, tab](const QString &) {
             tabs_->setTabText(tabs_->indexOf(tab), tab->title());

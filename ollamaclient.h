@@ -12,7 +12,7 @@ public:
 
 signals:
     void translated(const QString &translation, const QString &originalMessage);
-    void failed(const QString &message);
+    void failed(const QString &message, const QString &originalMessage);
 
 private:
     QNetworkAccessManager manager_;

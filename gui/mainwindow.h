@@ -11,6 +11,7 @@
 #include <QUuid>
 
 class QComboBox;
+class QSystemTrayIcon;
 class QTabWidget;
 class QTcpSocket;
 
@@ -32,6 +33,10 @@ private:
   void connectToAddress(const QString &address, quint16 port);
   void startListening();
   void startDiscovery();
+  void setupTrayIcon();
+  void updateTrayIcon();
+  void showFromTray();
+  void noteIncomingMessage();
   void announcePresence();
   void readDiscoveryDatagrams();
   void refreshHostList();
@@ -51,4 +56,6 @@ private:
   QHash<QString, DiscoveredHost> discoveredHosts_;
   QComboBox *host_;
   QTabWidget *tabs_;
+  QSystemTrayIcon *trayIcon_ = nullptr;
+  int unreadMessageCount_ = 0;
 };

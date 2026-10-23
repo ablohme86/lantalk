@@ -17,6 +17,8 @@ qt_add_executable(lanchat
     protocol/chatsession.h
     tui/terminalui.cpp
     tui/terminalui.h
+    gui/appicon.cpp
+    gui/appicon.h
     gui/dialogs.cpp
     gui/dialogs.h
     gui/chattab.cpp

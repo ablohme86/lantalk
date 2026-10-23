@@ -3,6 +3,8 @@
 LANChat is a Qt 6 desktop client for direct LAN chat using the TCP-based
 `LANCHAT PROTOCOL`. Each connected host has its own chat tab. The optional
 Live Translate feature uses a local Ollama `translategemma` model.
+The desktop app includes a custom chat icon and a system tray icon that shows
+unread messages received while LANChat is in the background.
 
 The desktop GUI is the default. Run with `--tui` for an ANSI terminal interface
 that listens for chats, discovers LANChat peers, and supports multiple
@@ -22,8 +24,11 @@ Press `Alt-C` for the Chat menu (connect, close the active chat, or quit) and
 and their confirmations use keyboard-friendly ASCII dialogs; `Esc` cancels.
 Typing and sending chat messages works while the chat area has focus. The
 existing slash commands remain available (`/help`, `/hosts`, `/connect`,
-`/tabs`, `/use`, `/close`, `/nick`, and `/quit`) and are used as the fallback
-when input or output is not an interactive TTY.
+`/tabs`, `/use`, `/close`, `/nick`, `/translate`, `/stoptranslate`, and
+`/quit`) and are used as the fallback when input or output is not an
+interactive TTY. Enable translation for the active conversation with
+`/translate <my language> | <peer language>`; pending Ollama translations appear
+in the bottom status line.
 
 Available LANChat hosts are discovered automatically and shown as
 `Nickname (IP address)` in the read-only Host selector. Selecting a discovered

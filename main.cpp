@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QCoreApplication>
 
+#include "gui/appicon.h"
 #include "gui/mainwindow.h"
 #include "tui/terminalui.h"
 
@@ -22,6 +23,7 @@ int main(int argc, char *argv[]) {
   QApplication application(argc, argv);
   application.setOrganizationName(QStringLiteral("LANChat"));
   application.setApplicationName(QStringLiteral("LANChat"));
+  application.setWindowIcon(createAppIcon());
   MainWindow window;
   window.show();
   return application.exec();
