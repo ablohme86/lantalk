@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.9.0 - 2026-10-24
+
 ### Changed
 
 - The central host service is now called `lantalkd` (it was
