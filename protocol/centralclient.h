@@ -50,6 +50,14 @@ public:
   // What the central host relays (CENTRAL_FILE_LIMIT), or -1 if it did not
   // say.
   qint64 maximumFileSize() const;
+  // The central host has an Ollama server that answers with its model
+  // (CENTRAL_OLLAMA), so it can translate for Live Translate.
+  bool canTranslate() const;
+  // Translates a message on the central host (CENTRAL_TRANSLATE); `done`
+  // gets the translation, or the error with ok false, always later.
+  void translate(const QString &message, const QString &sourceLanguage,
+                 const QString &targetLanguage,
+                 std::function<void(bool ok, const QString &result)> done);
   // The connected client a conversation with address:port (and nickname, if
   // known) should go to. `address` may also be a nickname.
   std::optional<Peer> findPeer(const QString &address, quint16 port,
@@ -62,6 +70,7 @@ public:
 signals:
   void stateChanged();
   void peersChanged();
+  void translationAvailabilityChanged();
   // Another client opened a conversation. Take ownership of `transport`
   // (e.g. with a ChatSession); otherwise it is closed.
   void incomingConnection(RelayTransport *transport);
@@ -101,6 +110,14 @@ private:
   bool replaced_ = false;
   QList<Peer> peers_;
   qint64 maximumFileSize_ = -1;
+  bool canTranslate_ = false;
+  struct PendingTranslation {
+    std::function<void(bool, const QString &)> done;
+    QTimer *timeout;
+  };
+  QHash<QString, PendingTranslation> translations_;
+  void setCanTranslate(bool canTranslate);
+  void finishTranslation(const QString &id, bool ok, const QString &result);
   QHash<QString, QPointer<RelayTransport>> channels_;
 };
 

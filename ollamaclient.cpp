@@ -29,8 +29,10 @@ void OllamaClient::setServer(const QString &url, const QString &model)
 void OllamaClient::checkAvailability()
 {
     QSettings settings;
-    const auto endpoint = settings.value(QStringLiteral("ollama/url"), DefaultOllamaUrl).toString().trimmed();
-    const auto model = settings.value(QStringLiteral("ollama/model"), DefaultOllamaModel).toString().trimmed();
+    const auto endpoint = url_.isEmpty()
+        ? settings.value(QStringLiteral("ollama/url"), DefaultOllamaUrl).toString().trimmed() : url_;
+    const auto model = url_.isEmpty()
+        ? settings.value(QStringLiteral("ollama/model"), DefaultOllamaModel).toString().trimmed() : model_;
     if (endpoint.isEmpty() || model.isEmpty()) {
         emit availabilityChecked(false, QStringLiteral("Ollama is not configured."));
         return;

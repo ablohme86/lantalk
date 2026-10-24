@@ -52,6 +52,7 @@ private:
   // Listens and discovers hosts on the LAN, or, with a central host
   // configured, leaves both to the central host.
   void applyNetworkMode();
+  void updateCentralTranslation();
   void startDiscovery();
   void stopDiscovery();
   void acceptRelayConnection(RelayTransport *transport);

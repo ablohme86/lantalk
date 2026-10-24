@@ -1,6 +1,7 @@
 #include "central/translationservice.h"
 
 #include "messagetranslator.h"
+#include "ollamaclient.h"
 #include "ollamadiscovery.h"
 #include "protocol/centralprotocol.h"
 
@@ -16,6 +17,7 @@ constexpr qsizetype MaximumTextLength = 32 * 1024;
 // Per client, so one cannot keep the Ollama server busy for everyone.
 constexpr int MaximumActiveTranslations = 4;
 constexpr qint64 MinimumScanIntervalMs = 30 * 1000;
+constexpr int AvailabilityCheckIntervalMs = 60 * 1000;
 
 QByteArray failure(const QString &id, const QString &reason) {
   return "CENTRAL_TRANSLATE_FAILED " + id.toUtf8() + ' ' +
@@ -25,15 +27,34 @@ QByteArray failure(const QString &id, const QString &reason) {
 } // namespace
 
 TranslationService::TranslationService(QObject *parent)
-    : QObject(parent), discovery_(new OllamaDiscovery(this)) {
+    : QObject(parent), discovery_(new OllamaDiscovery(this)),
+      checker_(new OllamaClient(this)) {
   connect(discovery_, &OllamaDiscovery::scanFinished, this,
           &TranslationService::infoChanged);
+  checkTimer_.setInterval(AvailabilityCheckIntervalMs);
+  connect(&checkTimer_, &QTimer::timeout, checker_,
+          &OllamaClient::checkAvailability);
+  connect(checker_, &OllamaClient::availabilityChecked, this,
+          [this](bool available, const QString &message) {
+            if (checked_ && available == available_) return;
+            checked_ = true;
+            available_ = available;
+            emit availabilityChanged(available, message);
+            emit infoChanged();
+          });
 }
 
 void TranslationService::setServer(const QString &url, const QString &model) {
   url_ = url.trimmed();
   while (url_.endsWith(u'/')) url_.chop(1);
   model_ = model.trimmed();
+  checked_ = false;
+  available_ = false;
+  checkTimer_.stop();
+  if (!isConfigured()) return;
+  checker_->setServer(url_, model_);
+  checker_->checkAvailability();
+  checkTimer_.start();
 }
 
 void TranslationService::setDiscoveryEnabled(bool enabled) {
@@ -42,11 +63,17 @@ void TranslationService::setDiscoveryEnabled(bool enabled) {
 
 bool TranslationService::isConfigured() const { return !url_.isEmpty(); }
 
+bool TranslationService::isAvailable() const {
+  return isConfigured() && available_;
+}
+
 OllamaDiscovery *TranslationService::discovery() const { return discovery_; }
 
 QByteArray TranslationService::infoLine() const {
   QJsonObject info{{QStringLiteral("configured"), isConfigured()}};
-  if (!isConfigured()) {
+  if (isConfigured()) {
+    info.insert(QStringLiteral("available"), isAvailable());
+  } else {
     QJsonArray servers;
     for (const auto &server : discovery_->servers()) {
       servers.append(QJsonObject{

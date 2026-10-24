@@ -4,6 +4,8 @@
 #include "protocol/conversationidentity.h"
 
 #include <QHostAddress>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLocale>
 #include <QUuid>
 
@@ -14,6 +16,8 @@ namespace {
 constexpr int DefaultReconnectIntervalMs = 10 * 1000;
 // How long a new conversation waits for the central host to be reachable.
 constexpr int ReadyTimeoutMs = 10 * 1000;
+// A large model on a busy server can take a while.
+constexpr int TranslationTimeoutMs = 3 * 60 * 1000;
 
 QString closeReasonText(const QString &reason, const QString &peer) {
   if (reason == QStringLiteral("unavailable")) {
@@ -114,6 +118,10 @@ void CentralClient::stop() {
   ready_ = false;
   clientId_.clear();
   failAllChannels(QStringLiteral("LANTalk left the central host."));
+  for (const auto &id : translations_.keys()) {
+    finishTranslation(id, false, QStringLiteral("LANTalk left the central host."));
+  }
+  setCanTranslate(false);
   if (!peers_.isEmpty()) {
     peers_.clear();
     emit peersChanged();
@@ -130,6 +138,51 @@ QString CentralClient::hostSpec() const { return hostSpec_; }
 QString CentralClient::lastError() const { return lastError_; }
 
 qint64 CentralClient::maximumFileSize() const { return maximumFileSize_; }
+
+bool CentralClient::canTranslate() const { return ready_ && canTranslate_; }
+
+void CentralClient::translate(const QString &message,
+                              const QString &sourceLanguage,
+                              const QString &targetLanguage,
+                              std::function<void(bool, const QString &)> done) {
+  const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  auto *timeout = new QTimer(this);
+  timeout->setSingleShot(true);
+  connect(timeout, &QTimer::timeout, this, [this, id] {
+    finishTranslation(id, false,
+                      QStringLiteral("The central host did not translate in time."));
+  });
+  translations_.insert(id, {std::move(done), timeout});
+  if (!canTranslate()) {
+    QTimer::singleShot(0, this, [this, id] {
+      finishTranslation(id, false,
+                        QStringLiteral("The central host cannot translate right now."));
+    });
+    return;
+  }
+  timeout->start(TranslationTimeoutMs);
+  const QJsonObject request{{QStringLiteral("text"), message},
+                            {QStringLiteral("source"), sourceLanguage},
+                            {QStringLiteral("target"), targetLanguage}};
+  sendLine(QStringLiteral("CENTRAL_TRANSLATE %1 %2")
+               .arg(id, QString::fromLatin1(QJsonDocument(request)
+                                                .toJson(QJsonDocument::Compact)
+                                                .toBase64(QByteArray::Base64UrlEncoding))));
+}
+
+void CentralClient::finishTranslation(const QString &id, bool ok,
+                                      const QString &result) {
+  const auto pending = translations_.take(id);
+  if (!pending.done) return;
+  pending.timeout->deleteLater();
+  pending.done(ok, result);
+}
+
+void CentralClient::setCanTranslate(bool canTranslate) {
+  if (canTranslate_ == canTranslate) return;
+  canTranslate_ = canTranslate;
+  emit translationAvailabilityChanged();
+}
 
 QList<CentralClient::Peer> CentralClient::peers() const {
   return ready_ ? peers_ : QList<Peer>();
@@ -203,6 +256,8 @@ void CentralClient::handleDisconnected(const QString &reason) {
   clientId_.clear();
   buffer_.clear();
   failAllChannels(reason);
+  for (const auto &id : translations_.keys()) finishTranslation(id, false, reason);
+  setCanTranslate(false);
   if (!peers_.isEmpty()) {
     peers_.clear();
     emit peersChanged();
@@ -266,6 +321,24 @@ void CentralClient::processLine(const QString &line) {
     }
     peers_.append(peer);
     if (ready_) emit peersChanged();
+    return;
+  }
+  if (command == QStringLiteral("CENTRAL_OLLAMA") && parts.size() == 2) {
+    // Only a server lantalkd was configured with and has verified; the
+    // web client's other choices do not apply to LANTalk.
+    const auto info = QJsonDocument::fromJson(QByteArray::fromBase64(
+                                                  parts.at(1).toLatin1(),
+                                                  QByteArray::Base64UrlEncoding))
+                          .object();
+    setCanTranslate(info.value(QStringLiteral("configured")).toBool() &&
+                    info.value(QStringLiteral("available")).toBool());
+    return;
+  }
+  if ((command == QStringLiteral("CENTRAL_TRANSLATED") ||
+       command == QStringLiteral("CENTRAL_TRANSLATE_FAILED")) &&
+      parts.size() == 3) {
+    finishTranslation(parts.at(1), command == QStringLiteral("CENTRAL_TRANSLATED"),
+                      CentralProtocol::decodeField(parts.at(2)));
     return;
   }
   if (command == QStringLiteral("CENTRAL_FILE_LIMIT") && parts.size() == 2) {

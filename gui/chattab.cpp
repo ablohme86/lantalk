@@ -522,7 +522,7 @@ void ChatTab::setOllamaDiscovery(OllamaDiscovery *discovery) {
 
 void ChatTab::refreshTranslationAvailability() {
   const auto available =
-      isOllamaConfigured() ||
+      MessageTranslator::isAvailable() ||
       (ollamaDiscovery_ && !ollamaDiscovery_->servers().isEmpty());
   if (!available && translateButton_->isChecked()) {
     const QSignalBlocker blocker(translateButton_);
@@ -553,10 +553,12 @@ void ChatTab::configureTranslation() {
   }
   if (dialog.exec() == QDialog::Accepted) {
     // The chosen server and model become the Ollama settings, as in the
-    // Settings dialog.
-    QSettings settings;
-    settings.setValue(QStringLiteral("ollama/url"), dialog.ollamaUrl());
-    settings.setValue(QStringLiteral("ollama/model"), dialog.ollamaModel());
+    // Settings dialog, unless the central host translates.
+    if (!MessageTranslator::hasRemote()) {
+      QSettings settings;
+      settings.setValue(QStringLiteral("ollama/url"), dialog.ollamaUrl());
+      settings.setValue(QStringLiteral("ollama/model"), dialog.ollamaModel());
+    }
     myLanguage_ = dialog.myLanguage();
     peerLanguage_ = dialog.peerLanguage();
     automaticTranslationRequest_ = false;

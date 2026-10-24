@@ -1,5 +1,7 @@
 #include "translationrestorer.h"
 
+#include "messagetranslator.h"
+
 #include "appconfig.h"
 #include "protocol/chatsession.h"
 #include "protocol/conversationidentity.h"
@@ -103,6 +105,11 @@ void TranslationRestorer::attemptResume()
 {
     if (!canResume()) {
         retryTimer_.stop();
+        return;
+    }
+    if (MessageTranslator::hasRemote()) {
+        // The central host checks its own Ollama server.
+        availabilityChecked(true, {});
         return;
     }
     if (!isOllamaConfigured()) {

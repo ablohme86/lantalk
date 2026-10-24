@@ -28,6 +28,8 @@ private:
   void updateState();
 
   OllamaDiscovery *discovery_;
+  // The central host translates, so there is no server to choose.
+  bool remote_;
   QComboBox *server_;
   QComboBox *model_;
   QLabel *scanStatus_;

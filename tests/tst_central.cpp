@@ -3,6 +3,8 @@
 #include "appconfig.h"
 
 #include "central/centralserver.h"
+#include "central/translationservice.h"
+#include "messagetranslator.h"
 #include "protocol/centralclient.h"
 #include "protocol/centralprotocol.h"
 
@@ -195,6 +197,66 @@ private slots:
     QVERIFY(!outgoing->sendFile(file.fileName()));
     QCOMPARE(status.last().first().toString(),
              QStringLiteral("Files larger than 10 kB cannot be sent."));
+  }
+
+  void lanTalkTranslatesThroughTheCentralHost() {
+    FakeOllama ollama({QStringLiteral("gemma")});
+    QVERIFY(ollama.listen());
+    CentralServer server;
+    TranslationService translation;
+    translation.setServer(ollama.url(), QStringLiteral("gemma"));
+    server.setTranslationService(&translation);
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    CentralPeer alice(QStringLiteral("alice"), server.serverPort());
+    QTRY_VERIFY(alice.client().canTranslate());
+
+    // What MainWindow and TerminalUi set up while the host can translate.
+    auto *client = &alice.client();
+    MessageTranslator::setRemote([client](const QString &message, const QString &source,
+                                          const QString &target,
+                                          std::function<void(bool, const QString &)> done) {
+      client->translate(message, source, target, std::move(done));
+    });
+    QVERIFY(MessageTranslator::isAvailable());
+    MessageTranslator translator;
+    QSignalSpy translated(&translator, &MessageTranslator::translated);
+    translator.translate(QStringLiteral("Hei\n[quote]\nsitat\n[/quote]"),
+                         QStringLiteral("Norwegian Bokmål"), QStringLiteral("English"));
+    QTRY_COMPARE(translated.size(), 1);
+    MessageTranslator::setRemote({});
+    // The central host translated it, leaving the quote alone.
+    QCOMPARE(translated.first().at(0).toString(),
+             QStringLiteral("<<Hei>>\n[quote]\nsitat\n[/quote]"));
+    QCOMPARE(ollama.translatedTexts(), QStringList{QStringLiteral("Hei")});
+  }
+
+  void unreachableCentralOllamaIsNotOffered() {
+    FakeOllama ollama({QStringLiteral("gemma")});
+    QVERIFY(ollama.listen());
+    const auto url = ollama.url();
+    ollama.close();
+    CentralServer server;
+    TranslationService translation;
+    QSignalSpy checked(&translation, &TranslationService::availabilityChanged);
+    translation.setServer(url, QStringLiteral("gemma"));
+    server.setTranslationService(&translation);
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    CentralPeer alice(QStringLiteral("alice"), server.serverPort());
+    QTRY_VERIFY(alice.client().isReady());
+    QTRY_COMPARE(checked.size(), 1);
+    QCOMPARE(checked.first().first().toBool(), false);
+    QTest::qWait(100);
+    QVERIFY(!alice.client().canTranslate());
+
+    bool answered = false;
+    QString error;
+    alice.client().translate(QStringLiteral("Hei"), QStringLiteral("Norwegian Bokmål"),
+                             QStringLiteral("English"), [&](bool ok, const QString &result) {
+                               answered = !ok;
+                               error = result;
+                             });
+    QTRY_VERIFY(answered);
+    QVERIFY(error.contains(QStringLiteral("cannot translate")));
   }
 
   void conversationEndsWhenThePeerLeaves() {

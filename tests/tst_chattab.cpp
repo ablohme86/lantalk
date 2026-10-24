@@ -5,6 +5,7 @@
 #include "gui/chattab.h"
 #include "gui/dialogs.h"
 #include "protocol/chathistory.h"
+#include "messagetranslator.h"
 #include "ollamadiscovery.h"
 #include "translationrestorer.h"
 
@@ -19,6 +20,7 @@
 #include <QScrollBar>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QTimer>
 
 #include <algorithm>
 
@@ -313,6 +315,48 @@ private slots:
     QCOMPARE(notified.first().at(1).toString(), QStringLiteral("<<hello>>"));
     QTest::qWait(100);
     QCOMPARE(notified.size(), 1);
+  }
+
+  void centralHostTranslatesWithoutALocalOllama() {
+    // What MainWindow sets up while the central host has a verified Ollama.
+    MessageTranslator::setRemote([](const QString &message, const QString &,
+                                    const QString &,
+                                    std::function<void(bool, const QString &)> done) {
+      QTimer::singleShot(0, [message, done] { done(true, QStringLiteral("[[%1]]").arg(message)); });
+    });
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    ChatTab tab(session);
+    session->setParent(&tab);
+    OllamaDiscovery discovery;
+    discovery.setCandidates({});
+    tab.setOllamaDiscovery(&discovery);
+    QPushButton *button = nullptr;
+    for (auto *candidate : tab.findChildren<QPushButton *>()) {
+      if (candidate->text() == QStringLiteral("Live Translate")) button = candidate;
+    }
+    QVERIFY(button);
+    QVERIFY(!button->isHidden());
+
+    // Only the languages are asked for.
+    {
+      TranslationDialog dialog(&discovery);
+      QVERIFY(dialog.findChild<QDialogButtonBox *>()->button(QDialogButtonBox::Ok)->isEnabled());
+      const auto combos = dialog.findChildren<QComboBox *>();
+      QCOMPARE(std::count_if(combos.cbegin(), combos.cend(),
+                             [](const QComboBox *combo) { return !combo->isHidden(); }),
+               2);
+    }
+
+    QTRY_COMPARE(bob.liveSessions().size(), 1);
+    QTRY_VERIFY(session->isHandshakeComplete());
+    session->requestLiveTranslation(QStringLiteral("Norwegian Bokmål"),
+                                    QStringLiteral("English"));
+    QTRY_VERIFY(button->isChecked());
+    bob.liveSessions().first()->sendMessage(QStringLiteral("hello"));
+    QTRY_VERIFY(tab.findChild<ChatLog *>()->toPlainText().endsWith(QStringLiteral("[[hello]]")));
+    MessageTranslator::setRemote({});
   }
 
   void translationsAreRememberedInHistory() {

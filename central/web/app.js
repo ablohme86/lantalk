@@ -102,6 +102,9 @@ const TEXTS = {
   liveTranslate: ["Live Translate", "Direkteoversettelse", "实时翻译", "即時翻譯"],
   serverTranslates: ["The server translates for you.", "Serveren oversetter for deg.",
                      "服务器会为你翻译。", "伺服器會為你翻譯。"],
+  serverOllamaDown: ["The server's Ollama is not answering right now.",
+                     "Serverens Ollama svarer ikke akkurat nå.",
+                     "服务器的 Ollama 目前没有响应。", "伺服器的 Ollama 目前沒有回應。"],
   sourceServer: ["Ollama found by the server", "Ollama funnet av serveren",
                  "服务器找到的 Ollama", "伺服器找到的 Ollama"],
   sourceDirect: ["My own Ollama address", "Min egen Ollama-adresse",
@@ -1240,6 +1243,10 @@ function renderTranslateSheet(checkAddress) {
   const configured = state.ollama.configured;
   $("translate-by-server").hidden = !configured;
   $("translate-source").hidden = configured;
+  // lantalkd checks its Ollama server every minute.
+  const down = configured && state.ollama.available === false;
+  $("translate-by-server").textContent = t(down ? "serverOllamaDown" : "serverTranslates");
+  $("translate-start").disabled = down;
   if (configured) return;
 
   for (const body of document.querySelectorAll(".choice-body")) {

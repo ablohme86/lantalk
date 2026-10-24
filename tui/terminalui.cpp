@@ -145,6 +145,8 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
         if (ansi_) redraw();
     });
     connect(&central_, &CentralClient::stateChanged, this, &TerminalUi::reportCentralState);
+    connect(&central_, &CentralClient::translationAvailabilityChanged, this,
+            &TerminalUi::updateCentralTranslation);
     applyNetworkMode();
 
 #ifdef Q_OS_UNIX
@@ -173,7 +175,25 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
 TerminalUi::~TerminalUi()
 {
     ChatTransport::setFactory({});
+    MessageTranslator::setRemote({});
     restoreTerminal();
+}
+
+void TerminalUi::updateCentralTranslation()
+{
+    // A central host with a verified Ollama server translates for every
+    // conversation.
+    if (central_.canTranslate()) {
+        QPointer<CentralClient> central(&central_);
+        MessageTranslator::setRemote([central](const QString &message, const QString &source,
+                                               const QString &target,
+                                               std::function<void(bool, const QString &)> done) {
+            if (central) central->translate(message, source, target, std::move(done));
+        });
+    } else {
+        MessageTranslator::setRemote({});
+    }
+    for (const auto &conversation : std::as_const(conversations_)) conversation.translation->retry();
 }
 
 void TerminalUi::applyNetworkMode()
@@ -754,7 +774,7 @@ void TerminalUi::handleCommand(const QString &command)
             setStatus(QStringLiteral("Open a conversation before enabling Live Translate."));
             return;
         }
-        if (!isOllamaConfigured()) {
+        if (!MessageTranslator::isAvailable()) {
             setStatus(QStringLiteral("Configure an Ollama URL and model in Settings first."));
             return;
         }

@@ -4,6 +4,7 @@
 #include "gui/appicon.h"
 #include "gui/chattab.h"
 #include "gui/dialogs.h"
+#include "messagetranslator.h"
 #include "protocol/chatsession.h"
 #include "protocol/chattransport.h"
 #include "protocol/connectionregistry.h"
@@ -21,6 +22,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPalette>
+#include <QPointer>
 #include <QSet>
 #include <QSettings>
 #include <QSignalBlocker>
@@ -103,6 +105,8 @@ MainWindow::MainWindow() {
           &MainWindow::refreshHostList);
   connect(&central_, &CentralClient::stateChanged, this,
           &MainWindow::updateCentralStatus);
+  connect(&central_, &CentralClient::translationAvailabilityChanged, this,
+          &MainWindow::updateCentralTranslation);
   // Ollama servers on the network make Live Translate available; look again
   // every few minutes.
   ollamaScanTimer_.setInterval(5 * 60 * 1000);
@@ -133,7 +137,30 @@ void MainWindow::showSettings() {
   }
 }
 
-MainWindow::~MainWindow() { ChatTransport::setFactory({}); }
+MainWindow::~MainWindow() {
+  ChatTransport::setFactory({});
+  MessageTranslator::setRemote({});
+}
+
+void MainWindow::updateCentralTranslation() {
+  // A central host with a verified Ollama server translates for every
+  // conversation.
+  if (central_.canTranslate()) {
+    QPointer<CentralClient> central(&central_);
+    MessageTranslator::setRemote(
+        [central](const QString &message, const QString &source,
+                  const QString &target,
+                  std::function<void(bool, const QString &)> done) {
+          if (central) central->translate(message, source, target, std::move(done));
+        });
+  } else {
+    MessageTranslator::setRemote({});
+  }
+  for (int index = 0; index < tabs_->count(); ++index) {
+    static_cast<ChatTab *>(tabs_->widget(index))
+        ->refreshTranslationAvailability();
+  }
+}
 
 void MainWindow::applyNetworkMode() {
   const QSettings settings;

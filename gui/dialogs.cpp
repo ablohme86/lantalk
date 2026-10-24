@@ -2,6 +2,7 @@
 
 #include "appconfig.h"
 #include "gui/uilanguage.h"
+#include "messagetranslator.h"
 #include "ollamadiscovery.h"
 #include "protocol/centralprotocol.h"
 
@@ -21,7 +22,8 @@
 
 TranslationDialog::TranslationDialog(OllamaDiscovery *discovery,
                                      QWidget *parent)
-    : QDialog(parent), discovery_(discovery) {
+    : QDialog(parent), discovery_(discovery),
+      remote_(MessageTranslator::hasRemote()) {
   setWindowTitle(tr("Live Translate"));
   auto *layout = new QFormLayout(this);
   server_ = new QComboBox(this);
@@ -47,6 +49,14 @@ TranslationDialog::TranslationDialog(OllamaDiscovery *discovery,
   layout->addRow(tr("Model"), model_);
   layout->addRow(tr("My Language"), myLanguage_);
   layout->addRow(tr("Peer Language"), peerLanguage_);
+  if (remote_) {
+    layout->setRowVisible(serverRow, false);
+    layout->setRowVisible(scanStatus_, false);
+    layout->setRowVisible(model_, false);
+    auto *note = new QLabel(tr("The central host translates for you."), this);
+    note->setStyleSheet(QStringLiteral("color: palette(mid);"));
+    layout->insertRow(0, note);
+  }
   buttons_ = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
   connect(buttons_, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -139,9 +149,10 @@ void TranslationDialog::updateState() {
         : count == 1 ? tr("1 Ollama server found on the network.")
                      : tr("%1 Ollama servers found on the network.").arg(count));
   }
-  scanStatus_->setVisible(discovery_ != nullptr);
+  scanStatus_->setVisible(discovery_ != nullptr && !remote_);
   buttons_->button(QDialogButtonBox::Ok)
-      ->setEnabled(!ollamaUrl().isEmpty() && !ollamaModel().isEmpty());
+      ->setEnabled(remote_ ||
+                   (!ollamaUrl().isEmpty() && !ollamaModel().isEmpty()));
 }
 
 QString TranslationDialog::myLanguage() const {

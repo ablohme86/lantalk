@@ -262,10 +262,18 @@ private slots:
     QVERIFY(web.listen(QHostAddress::LocalHost, 0));
     WebPeer phone(web.serverPort());
     signIn(phone, QStringLiteral("mia"));
-    const auto info = phone.lineStartingWith(QStringLiteral("CENTRAL_OLLAMA "));
-    QVERIFY(QByteArray::fromBase64(info.section(u' ', 1).toLatin1(),
-                                   QByteArray::Base64UrlEncoding)
-                .contains("\"configured\":true"));
+    // Once checked, the configured server is reported as available.
+    QTRY_VERIFY([&] {
+      for (const auto &line : phone.lines()) {
+        const auto info = QByteArray::fromBase64(line.section(u' ', 1).toLatin1(),
+                                                 QByteArray::Base64UrlEncoding);
+        if (line.startsWith(QStringLiteral("CENTRAL_OLLAMA ")) &&
+            info.contains("\"configured\":true") && info.contains("\"available\":true")) {
+          return true;
+        }
+      }
+      return false;
+    }());
 
     phone.send("CENTRAL_TRANSLATE t-1 " +
                translateRequest({{QStringLiteral("text"), QStringLiteral("Hei verden")},

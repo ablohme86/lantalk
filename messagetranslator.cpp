@@ -1,10 +1,19 @@
 #include "messagetranslator.h"
 
+#include "appconfig.h"
 #include "ollamaclient.h"
+
+#include <QPointer>
 
 #include <memory>
 
 namespace {
+
+MessageTranslator::Remote &remoteTranslator()
+{
+    static MessageTranslator::Remote remote;
+    return remote;
+}
 
 bool needsTranslation(const QuotedMessage::Segment &segment)
 {
@@ -27,6 +36,21 @@ struct MessageTranslator::Job {
 
 MessageTranslator::MessageTranslator(QObject *parent) : QObject(parent) {}
 
+void MessageTranslator::setRemote(Remote remote)
+{
+    remoteTranslator() = std::move(remote);
+}
+
+bool MessageTranslator::hasRemote()
+{
+    return bool(remoteTranslator());
+}
+
+bool MessageTranslator::isAvailable()
+{
+    return hasRemote() || isOllamaConfigured();
+}
+
 void MessageTranslator::setServer(const QString &url, const QString &model)
 {
     url_ = url;
@@ -36,6 +60,18 @@ void MessageTranslator::setServer(const QString &url, const QString &model)
 void MessageTranslator::translate(const QString &message, const QString &sourceLanguage,
                                   const QString &targetLanguage)
 {
+    if (hasRemote() && url_.isEmpty()) {
+        // The remote handles quotes itself, as this class does below.
+        const auto original = QuotedMessage::withoutTranslateFlags(message);
+        QPointer<MessageTranslator> self(this);
+        remoteTranslator()(message, sourceLanguage, targetLanguage,
+                           [self, original](bool ok, const QString &result) {
+                               if (!self) return;
+                               if (ok) emit self->translated(result, original);
+                               else emit self->failed(result, original);
+                           });
+        return;
+    }
     auto job = std::make_shared<Job>();
     job->segments = QuotedMessage::parse(message);
     job->original = QuotedMessage::withoutTranslateFlags(message);

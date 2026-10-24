@@ -150,13 +150,21 @@ int main(int argc, char *argv[]) {
                         parser.value(ollamaModelOption));
   translation.setDiscoveryEnabled(!parser.isSet(noOllamaDiscoveryOption));
   server.setTranslationService(&translation);
-  server.setLogger([](const QString &message) {
+  const auto log = [](const QString &message) {
     std::fprintf(stdout, "%s %s\n",
                  qPrintable(QDateTime::currentDateTime().toString(
                      Qt::ISODate)),
                  qPrintable(message));
     std::fflush(stdout);
-  });
+  };
+  server.setLogger(log);
+  QObject::connect(&translation, &TranslationService::availabilityChanged,
+                   &server, [log](bool available, const QString &message) {
+                     log(available
+                             ? QStringLiteral("Ollama is available for Live Translate")
+                             : QStringLiteral("Ollama is not available for Live Translate: %1")
+                                   .arg(message));
+                   });
   if (!server.listen(address, port)) {
     std::fprintf(stderr, "Cannot listen on %s:%u: %s\n",
                  qPrintable(address.toString()), unsigned(port),
@@ -175,7 +183,7 @@ int main(int argc, char *argv[]) {
                      : qPrintable(QStringLiteral("Files up to %1 MB").arg(maxFileSize)));
   }
   if (translation.isConfigured()) {
-    std::fprintf(stdout, "Live Translate for web clients with %s at %s\n",
+    std::fprintf(stdout, "Live Translate with %s at %s\n",
                  qPrintable(parser.value(ollamaModelOption)),
                  qPrintable(parser.value(ollamaUrlOption)));
   }

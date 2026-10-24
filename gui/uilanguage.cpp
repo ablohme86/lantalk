@@ -68,6 +68,7 @@ const TranslationRow Translations[] = {
     // Settings and Live Translate dialogs
     {"Live Translate", "Direkteoversettelse", "实时翻译", "即時翻譯"},
     {"Rescan", "Søk på nytt", "重新扫描", "重新掃描"},
+    {"The central host translates for you.", "Den sentrale verten oversetter for deg.", "中心主机会为你翻译。", "中央主機會為你翻譯。"},
     {"Ollama server", "Ollama-server", "Ollama 服务器", "Ollama 伺服器"},
     {"Model", "Modell", "模型", "模型"},
     {"My Language", "Mitt språk", "我的语言", "我的語言"},

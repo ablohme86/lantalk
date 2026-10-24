@@ -33,6 +33,12 @@
 - `lantalkd --max-file-size <MB>` limits the files it relays (default 50;
   0 relays none). Clients refuse larger files at once, and `lantalkd`
   stops them from older clients.
+- LANTalk (GUI and TUI) uses Live Translate through the central host when
+  `lantalkd` has an Ollama server configured (`--ollama-url`,
+  `--ollama-model`) that answers with its model; no Ollama server of your
+  own is needed, and the dialog only asks for the languages. `lantalkd`
+  checks that server every minute and logs when it becomes available or
+  stops answering.
 - Chat history keeps every message instead of the last 500, in a file per
   conversation (existing history moves there by itself). A reopened
   conversation shows the last 200, and **Show earlier messages** loads 200

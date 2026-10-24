@@ -210,7 +210,13 @@ message is a tap away. Where the translation happens depends on `lantalkd`:
 
 - Started with `--ollama-url <url> --ollama-model <model>`, it translates
   every web client's messages with that server; the page only asks for the
-  two languages.
+  two languages. `lantalkd` checks every minute that the server answers and
+  has the model, logs when that changes, and offers translation only while
+  it does. LANTalk (GUI and TUI) connected to that central host then uses
+  it too: Live Translate is available without an Ollama server of your
+  own, the dialog only asks for the languages, and each message goes from
+  LANTalk to `lantalkd`, which has Ollama translate it and sends the
+  translation back for LANTalk to deliver with the original.
 - Otherwise the page offers two choices. *Ollama found by the server* lists
   the Ollama servers `lantalkd` finds on its own network (this computer and
   the private subnets of its network cards, as LANTalk searches), and

@@ -74,6 +74,7 @@ private:
   void startDiscovery();
   void stopDiscovery();
   void reportCentralState();
+  void updateCentralTranslation();
   void announcePresence();
   void readDiscoveryDatagrams();
   void scanPrivateSubnets();

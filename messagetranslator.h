@@ -5,6 +5,7 @@
 #include <QObject>
 #include <QString>
 
+#include <functional>
 #include <memory>
 
 // Translates a chat message with Ollama while leaving its quotes as they are
@@ -15,7 +16,19 @@ class MessageTranslator final : public QObject {
     Q_OBJECT
 
 public:
+    // Translates a whole message somewhere else, e.g. on the central host;
+    // `done` gets the translation, or the error with ok false.
+    using Remote = std::function<void(const QString &message, const QString &sourceLanguage,
+                                      const QString &targetLanguage,
+                                      std::function<void(bool ok, const QString &result)> done)>;
+
     explicit MessageTranslator(QObject *parent = nullptr);
+    // While set, every translator sends its messages there instead of to
+    // the configured Ollama server; an empty Remote ends that.
+    static void setRemote(Remote remote);
+    static bool hasRemote();
+    // A remote or a configured Ollama server can translate.
+    static bool isAvailable();
     // Uses this server and model instead of the ones in the settings.
     void setServer(const QString &url, const QString &model);
     void translate(const QString &message, const QString &sourceLanguage, const QString &targetLanguage);
