@@ -305,6 +305,11 @@ const CHAT_PORT = 45454;
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 const CHUNK_SIZE = 16 * 1024;
 const PING_INTERVAL_MS = 25 * 1000;
+// Like LANTalk (CentralProtocol::IdleTimeoutMs): a connection that has been
+// silent this long is dead, even if the browser has not noticed.
+const IDLE_TIMEOUT_MS = 90 * 1000;
+const CONNECT_TIMEOUT_MS = 15 * 1000;
+const WAKE_CHECK_MS = 5 * 1000;
 const TYPING_REFRESH_MS = 15 * 1000;
 const TYPING_IDLE_MS = 60 * 1000;
 const TYPING_EXPIRY_MS = 35 * 1000;
@@ -322,6 +327,7 @@ const state = {
   retryDelay: 1000,
   retryTimer: 0,
   pingTimer: 0,
+  lastReceived: 0,
   peers: new Map(),         // id -> {id, nickname, address, port}
   conversations: new Map(), // key -> conversation
   channels: new Map(),      // channel id -> channel
@@ -347,29 +353,47 @@ function connect() {
     return;
   }
   state.socket = socket;
+  state.lastReceived = Date.now();
   socket.onmessage = event => {
+    state.lastReceived = Date.now();
     for (const line of String(event.data).split("\n")) if (line) handleCentral(line);
   };
-  socket.onclose = () => {
-    if (state.socket !== socket) return;
-    state.socket = null;
-    clearInterval(state.pingTimer);
-    failPendingTranslations();
-    const wasReady = state.ready;
-    state.ready = false;
-    for (const channel of state.channels.values()) channelClosed(channel, false);
-    state.peers.clear();
-    if (state.stopped) return;
-    if (state.signingIn && !wasReady) {
-      failSignIn(t("cannotConnect"));
-      return;
-    }
-    showBanner(t("reconnecting"));
-    renderPeople();
-    renderChatHeader();
-    state.retryTimer = setTimeout(connect, state.retryDelay);
-    state.retryDelay = Math.min(state.retryDelay * 2, 15000);
-  };
+  socket.onclose = () => connectionLost(socket);
+  // An unreachable server can leave the attempt hanging for minutes.
+  setTimeout(() => {
+    if (state.socket === socket && !state.ready) dropConnection();
+  }, CONNECT_TIMEOUT_MS);
+}
+
+// Gives up on a connection that went quiet without closing, as when a phone
+// changes networks; waiting for the browser to notice can take minutes.
+function dropConnection() {
+  const socket = state.socket;
+  if (!socket) return;
+  socket.onclose = socket.onmessage = null;
+  try { socket.close(); } catch { /* already closed */ }
+  connectionLost(socket);
+}
+
+function connectionLost(socket) {
+  if (state.socket !== socket) return;
+  state.socket = null;
+  clearInterval(state.pingTimer);
+  failPendingTranslations();
+  const wasReady = state.ready;
+  state.ready = false;
+  for (const channel of state.channels.values()) channelClosed(channel, false);
+  state.peers.clear();
+  if (state.stopped) return;
+  if (state.signingIn && !wasReady) {
+    failSignIn(t("cannotConnect"));
+    return;
+  }
+  showBanner(t("reconnecting"));
+  renderPeople();
+  renderChatHeader();
+  state.retryTimer = setTimeout(connect, state.retryDelay);
+  state.retryDelay = Math.min(state.retryDelay * 2, 15000);
 }
 
 function disconnect() {
@@ -445,7 +469,10 @@ function handleCentral(line) {
       state.ready = true;
       state.retryDelay = 1000;
       clearInterval(state.pingTimer);
-      state.pingTimer = setInterval(() => sendCentral("CENTRAL_PING"), PING_INTERVAL_MS);
+      state.pingTimer = setInterval(() => {
+        if (Date.now() - state.lastReceived > IDLE_TIMEOUT_MS) dropConnection();
+        else sendCentral("CENTRAL_PING");
+      }, PING_INTERVAL_MS);
       signedIn();
       break;
     case "CENTRAL_INCOMING": {
@@ -1768,10 +1795,12 @@ function failSignIn(error, forgetPassword = false) {
   showLogin(error);
 }
 
-function startSignIn(nickname, password) {
+// A remembered sign-in keeps trying while the server is away; one the user
+// just typed reports the failure.
+function startSignIn(nickname, password, automatic = false) {
   state.nickname = nickname;
   state.password = password;
-  state.signingIn = true;
+  state.signingIn = !automatic;
   loadHistory();
   connect();
 }
@@ -1883,8 +1912,16 @@ function setup() {
 
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
-    // Phones suspend background pages; come back at once.
+    // Phones suspend background pages; come back at once, and make sure a
+    // connection that looks open still answers.
     if (!state.stopped && !state.socket) connect();
+    if (state.ready) {
+      const asked = Date.now();
+      sendCentral("CENTRAL_PING");
+      setTimeout(() => {
+        if (state.ready && state.lastReceived < asked) dropConnection();
+      }, WAKE_CHECK_MS);
+    }
     const conversation = state.conversations.get(state.current);
     if (conversation && isVisible(conversation) && conversation.unread) {
       conversation.unread = 0;
@@ -1901,7 +1938,7 @@ function setup() {
     showBanner(t("connecting"));
     state.nickname = nickname;
     renderChat();
-    startSignIn(nickname, password);
+    startSignIn(nickname, password, true);
   } else {
     showLogin("");
   }
