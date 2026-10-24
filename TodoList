@@ -1,0 +1,67 @@
+# Feature Requests and Implementation Requirements
+
+## 1. Persist Live Translation Language Settings Per Tab
+
+- Persist the Live Translation language settings independently for each conversation tab.
+- When the application restarts or a connection is re-established, restore the previously configured translation settings for each tab.
+- If the configured Ollama server is reachable and the required model is available, Live Translation should automatically resume as soon as the conversation reconnects.
+- The user should not have to manually enable Live Translation or reselect the languages after restarting the application or reconnecting.
+- Handle unavailable Ollama servers gracefully. If the server becomes available again, translation should resume automatically when possible.
+
+## 2. Prevent Duplicate Connections to Existing Conversations
+
+- When a user attempts to connect to a host they already have an active conversation with, through either the GUI or TUI, do not create a new connection.
+- Instead, automatically switch to the existing tab containing that conversation.
+- This behavior must be consistent across both the GUI and TUI.
+- Ensure that existing connection state and conversation history remain intact when switching to the existing tab.
+
+## 3. Enforce Unique Connections Per Nickname and Host
+
+- The application must never allow multiple simultaneous connections to the same nickname on the same host.
+- Before establishing a new connection, check whether a connection to the specified host and nickname already exists.
+- If a matching connection exists, reuse the existing connection and navigate to its conversation tab rather than creating another connection.
+- Enforce this rule at the underlying connection-management level, not just in the GUI or TUI, so duplicate connections cannot be created through any application interface or internal code path.
+- Ensure that connection identity comparisons are consistent and reliable.
+
+## 4. Add a Remote User Typing Indicator
+
+Implement a typing indicator that informs the local user when the remote participant is composing a message.
+
+### User Interface
+
+- Display a subtle animated indicator or a text label such as **"User is typing..."** directly above the message input field.
+- Show the indicator when the remote participant starts typing.
+- Hide the indicator when the remote participant stops typing or sends the message.
+- Keep the indicator consistent across the GUI and TUI, using an appropriate presentation for each interface.
+- Avoid unnecessary flickering or leaving the indicator active indefinitely if a typing-stop notification is lost.
+
+- **Automatic typing timeout:** If a user has started typing but no additional text input is detected for 60 seconds, automatically send `TYPING STOP` to the remote participant. Reset the 60-second inactivity timer whenever new text input is detected. This ensures that the remote typing indicator does not remain active indefinitely if the user stops typing without sending a message or explicitly triggering a typing-stop event.
+
+### LANCHAT Protocol Extensions
+
+Extend the LANCHAT protocol to support typing notifications. Introduce protocol messages such as:
+
+- `TYPING START` — Sent when a user starts composing a message.
+- `TYPING STOP` — Sent when a user stops typing, clears the input, or otherwise stops composing a message.
+
+Define the protocol behavior carefully so that:
+
+- Typing notifications are sent to the relevant conversation participant without interfering with normal message delivery.
+- Repeated typing events do not generate excessive network traffic.
+- The typing indicator automatically expires after a configurable or reasonable timeout if no further typing notifications arrive.
+- Typing notifications are handled correctly across disconnects, reconnects, and application restarts.
+- The protocol extension remains backward-compatible where practical, or handles older clients gracefully.
+
+## General Implementation Requirements
+
+- First inspect the existing codebase and identify the relevant connection-management, tab-state, translation, GUI, TUI, and LANCHAT protocol components.
+- Reuse existing architectural patterns and avoid unnecessary duplication.
+- Persist per-tab translation settings using the application's existing configuration or persistence mechanism, if suitable.
+- Ensure that GUI and TUI behavior remains consistent.
+- Handle connection failures, reconnection races, and duplicate connection attempts safely.
+- Follow the project's existing coding conventions and architecture.
+- Implement the features fully, including protocol changes, persistence, UI updates, and necessary tests.
+- Add or update tests to cover application restarts, reconnections, duplicate connection attempts, translation restoration, and typing notifications.
+- Avoid introducing regressions in existing chat functionality.
+
+**Goal:** Deliver a robust implementation of all four features, integrated into the existing application rather than as isolated workarounds.
