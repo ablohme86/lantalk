@@ -34,4 +34,10 @@ void replace(const QString &address, const QString &peerName,
              const QString &sender, const QDateTime &timestamp,
              const QString &message, const QString &alternate);
 
+// Moves the conversation kept for `fromAddress` to `toAddress`, ahead of any
+// kept there, e.g. when a peer's conversations move to the central host's
+// address.
+void adopt(const QString &fromAddress, const QString &toAddress,
+           const QString &peerName);
+
 } // namespace ChatHistory

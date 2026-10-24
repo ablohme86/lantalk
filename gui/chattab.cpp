@@ -216,6 +216,19 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(imageViewer_->closeButton(), &QPushButton::clicked, this,
           [this] { viewStack_->setCurrentWidget(log_); });
   connect(session_, &ChatSession::messageReceived, this, &ChatTab::received);
+  // Sent from another device of this account: what was typed, and the
+  // translation sent with it.
+  connect(session_, &ChatSession::messageMirrored, this,
+          [this](const QString &message, const QString &originalMessage) {
+            const auto timestamp = QDateTime::currentDateTime();
+            const auto typed = originalMessage.isEmpty() ? message : originalMessage;
+            const auto translation = originalMessage.isEmpty() ? QString() : message;
+            appendMessage(QStringLiteral("You"), typed, translation,
+                          tr("Sent translation"), false, timestamp);
+            ChatHistory::append(session_->peerAddress(), session_->peerName(),
+                                QStringLiteral("You"), typed, timestamp,
+                                translation);
+          });
   connect(session_, &ChatSession::fileSent, this,
           [this](const QString &name, const QString &path,
                  const QString &mime, const QString &id) {
@@ -244,6 +257,21 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     status_->setText(tr("Live Translate: %1 ↔ %2")
                          .arg(myLanguage_, peerLanguage_));
     translatePendingIncomingMessages();
+  });
+  connect(session_, &ChatSession::liveTranslationAdopted, this,
+          [this](const QString &myLanguage, const QString &peerLanguage) {
+            myLanguage_ = myLanguage;
+            peerLanguage_ = peerLanguage;
+          });
+  connect(session_, &ChatSession::liveTranslationStopped, this, [this] {
+    liveTranslate_ = false;
+    automaticTranslationRequest_ = false;
+    updateQuoteTranslation();
+    {
+      const QSignalBlocker blocker(translateButton_);
+      translateButton_->setChecked(false);
+    }
+    status_->setText(tr("Live Translate was turned off on another device."));
   });
   connect(session_, &ChatSession::liveTranslationDenied, this,
           [this](const QString &message) {
@@ -340,6 +368,8 @@ QString ChatTab::title() const {
   }
   // A phone's address says little; that it is the web client says more.
   if (session_->peerIsWebClient()) return tr("%1 (Web)").arg(peer);
+  // Signed in with a PIN, possibly on several devices: no one address.
+  if (session_->peerHasAccount()) return peer;
   return address.isEmpty() ? peer
                            : QStringLiteral("%1 (%2)").arg(peer, address);
 }
@@ -384,6 +414,14 @@ void ChatTab::setReconnectOnPresence(bool enabled) {
              reconnectPort_ != 0) {
     reconnectTimer_->start();
   }
+}
+
+bool ChatTab::showSyncedEntry(const ChatHistory::Entry &entry) {
+  if (!historyLoaded_) return false;
+  const auto message = historyMessage(entry);
+  log_->appendMessage(message.outgoing, message.message, message.timestamp,
+                      false, message.toolTip);
+  return true;
 }
 
 void ChatTab::closeConversation() {

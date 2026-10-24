@@ -149,6 +149,28 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
     connect(&central_, &CentralClient::stateChanged, this, &TerminalUi::reportCentralState);
     connect(&central_, &CentralClient::translationAvailabilityChanged, this,
             &TerminalUi::updateCentralTranslation);
+    connect(&central_, &CentralClient::accountStateChanged, this, &TerminalUi::updateAccountState);
+    connect(&central_, &CentralClient::pinRequired, this, &TerminalUi::askForPin);
+    connect(&central_, &CentralClient::pinChanged, this, [this] {
+        setStatus(QStringLiteral("PIN changed. Use the new PIN on your other devices."));
+    });
+    connect(&central_, &CentralClient::historyEntryAdded, this,
+            [this](const QString &address, const QString &nickname, const ChatHistory::Entry &entry) {
+                for (int index = 0; index < conversations_.size(); ++index) {
+                    auto *session = conversations_.at(index).session;
+                    if (!conversations_.at(index).historyLoaded
+                        || !ConversationIdentity::sameAddress(session->peerAddress(), address)
+                        || !ConversationIdentity::sameNickname(session->identityName(), nickname)) {
+                        continue;
+                    }
+                    if (index != currentConversation_ && entry.sender != QStringLiteral("You")) {
+                        conversations_[index].unread = true;
+                    }
+                    appendTranscript(index, ChatHistory::timestampPrefix(entry.timestamp)
+                                                + QStringLiteral("%1: %2").arg(entry.sender, entry.message));
+                }
+                if (ansi_) redraw();
+            });
     applyNetworkMode();
 
 #ifdef Q_OS_UNIX
@@ -292,6 +314,69 @@ void TerminalUi::reportCentralState()
                       .arg(central_.hostSpec(), central_.lastError()));
     } else {
         setStatus(QStringLiteral("Connecting to central host %1...").arg(central_.hostSpec()));
+    }
+}
+
+QString TerminalUi::pinOfferKey() const
+{
+    return QStringLiteral("central/pinDeclined/%1")
+        .arg(ConversationIdentity::digest(central_.hostSpec(), nickname()));
+}
+
+void TerminalUi::updateAccountState()
+{
+    if (central_.accountState() != CentralClient::AccountState::Unprotected || pinOffered_
+        || QSettings().value(pinOfferKey()).toBool()) {
+        return;
+    }
+    // Once per run; declining stops asking for this host and nickname.
+    pinOffered_ = true;
+    if (!ansi_) {
+        print(QStringLiteral("Protect %1 with a personal 4-digit PIN to use it on several devices "
+                             "at once (the central host also keeps your conversations): /pin <PIN>, "
+                             "or /pin no to stop asking.")
+                  .arg(nickname()));
+        return;
+    }
+    if (dialog_ != Dialog::None) return;
+    pinMode_ = PinMode::Create;
+    openDialog(Dialog::Pin, QStringLiteral("Personal PIN"),
+               QStringLiteral("4-digit PIN to use %1 on several devices (Enter = not now)").arg(nickname()));
+    redraw();
+}
+
+void TerminalUi::askForPin(const QString &reason)
+{
+    const auto prompt = reason == QStringLiteral("wrong")
+                            ? QStringLiteral("Wrong PIN for %1. Try again").arg(nickname())
+                        : reason == QStringLiteral("locked")
+                            ? QStringLiteral("Too many wrong PINs for %1; wait a few minutes").arg(nickname())
+                            : QStringLiteral("%1 is protected with a PIN. PIN").arg(nickname());
+    if (!ansi_) {
+        print(prompt + QStringLiteral(": sign in with /pin <PIN>."));
+        return;
+    }
+    pinMode_ = PinMode::Enter;
+    openDialog(Dialog::Pin, QStringLiteral("Enter your PIN"), prompt);
+    redraw();
+}
+
+void TerminalUi::usePin(PinMode mode, const QString &pin)
+{
+    if (!CentralProtocol::isValidPin(pin)) {
+        setStatus(QStringLiteral("A PIN is 4 digits."));
+        return;
+    }
+    if (mode == PinMode::Enter) {
+        central_.signInWithPin(pin);
+        return;
+    }
+    if (!central_.setPin(pin)) {
+        setStatus(QStringLiteral("Not connected to the central host."));
+        return;
+    }
+    if (mode == PinMode::Create) {
+        setStatus(QStringLiteral("Protecting %1 with the PIN...").arg(nickname()));
     }
 }
 
@@ -764,9 +849,35 @@ void TerminalUi::handleCommand(const QString &command)
     if (name == QStringLiteral("/help")) {
         print(QStringLiteral("/hosts, /connect <host|number> [port], /tabs, /use <tab>, /close [tab], "
                              "/nick <name>, /translate <my language> | <peer language>, "
-                             "/stoptranslate, /quote-translate [n|all], /unquote [n|all], /quit. "
+                             "/stoptranslate, /quote-translate [n|all], /unquote [n|all], "
+                             "/pin <PIN> (personal PIN on a central host), /quit. "
                              "In the full-screen UI use Tab and arrows; Ctrl-W closes the active chat. "
                              "Multi-line pastes become quotes, sent with the next message and not translated."));
+    } else if (name == QStringLiteral("/pin")) {
+        const auto state = central_.accountState();
+        if (!central_.isActive()) {
+            print(QStringLiteral("A personal PIN needs a central host."));
+        } else if (parts.value(1).compare(QStringLiteral("no"), Qt::CaseInsensitive) == 0) {
+            QSettings().setValue(pinOfferKey(), true);
+            print(QStringLiteral("LANTalk will not ask for a PIN again on this central host."));
+        } else if (state == CentralClient::AccountState::Unavailable) {
+            print(QStringLiteral("This central host does not keep personal PINs."));
+        } else {
+            const auto mode = state == CentralClient::AccountState::Protected ? PinMode::Change
+                              : state == CentralClient::AccountState::Unprotected ? PinMode::Create
+                                                                                  : PinMode::Enter;
+            if (parts.size() >= 2) {
+                usePin(mode, parts.at(1));
+            } else if (ansi_) {
+                pinMode_ = mode;
+                openDialog(Dialog::Pin, QStringLiteral("Personal PIN"),
+                           mode == PinMode::Change ? QStringLiteral("New 4-digit PIN for %1").arg(nickname())
+                           : mode == PinMode::Create ? QStringLiteral("4-digit PIN to protect %1").arg(nickname())
+                                                     : QStringLiteral("PIN for %1").arg(nickname()));
+            } else {
+                print(QStringLiteral("Usage: /pin <4 digits>"));
+            }
+        }
     } else if (name == QStringLiteral("/hosts")) {
         focus_ = Focus::Hosts;
         printHosts();
@@ -1044,6 +1155,20 @@ void TerminalUi::acceptDialog()
         openDialog(Dialog::CentralPassword, QStringLiteral("Central Host"),
                    QStringLiteral("Password (Enter keeps it, - for none)"), QString());
         return;
+    } else if (dialog == Dialog::Pin) {
+        dialog_ = Dialog::None;
+        dialogInput_.clear();
+        if (value.isEmpty()) {
+            if (pinMode_ == PinMode::Create) {
+                QSettings().setValue(pinOfferKey(), true);
+                status_ = QStringLiteral("No PIN for now; /pin <PIN> sets one later.");
+            } else {
+                status_ = QStringLiteral("Cancelled.");
+            }
+            return;
+        }
+        usePin(pinMode_, value);
+        return;
     } else if (dialog == Dialog::CentralPassword) {
         // Passwords may start or end with spaces, so use the raw input.
         const QString password = dialogInput_;
@@ -1243,6 +1368,34 @@ void TerminalUi::addSession(ChatSession *session, const QString &title)
                         });
                 translator->translate(message, peerLanguage, myLanguage);
             });
+    // Sent from another device of this account.
+    connect(session, &ChatSession::messageMirrored, this,
+            [this, session](const QString &message, const QString &originalMessage) {
+                const int index = conversationIndex(session);
+                if (index < 0) return;
+                const auto timestamp = QDateTime::currentDateTime();
+                const auto typed = originalMessage.isEmpty() ? message : originalMessage;
+                appendTranscript(index, ChatHistory::timestampPrefix(timestamp)
+                                            + QStringLiteral("You: %1").arg(typed));
+                ChatHistory::append(session->peerAddress(), session->peerName(), QStringLiteral("You"),
+                                    typed, timestamp, originalMessage.isEmpty() ? QString() : message);
+            });
+    connect(session, &ChatSession::liveTranslationAdopted, this,
+            [this, session](const QString &myLanguage, const QString &peerLanguage) {
+                const int index = conversationIndex(session);
+                if (index < 0) return;
+                conversations_[index].myLanguage = myLanguage;
+                conversations_[index].peerLanguage = peerLanguage;
+            });
+    connect(session, &ChatSession::liveTranslationStopped, this, [this, session] {
+        const int index = conversationIndex(session);
+        if (index >= 0) conversations_[index].liveTranslate = false;
+        setStatus(QStringLiteral("Live Translate was turned off on another device."));
+    });
+    connect(session, &ChatSession::fileSent, this, [this, session](const QString &name, const QString &) {
+        const int index = conversationIndex(session);
+        if (index >= 0) appendTranscript(index, QStringLiteral("* You sent %1").arg(name));
+    });
     connect(session, &ChatSession::statusChanged, this, [this, session](const QString &message) {
         const int index = conversationIndex(session);
         if (index >= 0) appendTranscript(index, QStringLiteral("* %1").arg(message));
@@ -1512,7 +1665,7 @@ QList<TerminalUi::DiscoveredHost> TerminalUi::sortedHosts() const
         hosts.clear();
         for (const auto &peer : central_.peers()) {
             hosts.append({peer.nickname, QHostAddress(peer.address), peer.port, QDateTime::currentDateTimeUtc(),
-                          peer.web, peer.away});
+                          peer.web, peer.away, peer.account ? peer.devices : 1});
         }
     }
     std::sort(hosts.begin(), hosts.end(), [](const DiscoveredHost &a, const DiscoveredHost &b) {
@@ -1614,7 +1767,7 @@ void TerminalUi::drawDialog() const
     at(3);
     terminalOutput << "\x1b[35m" << boxedLine(dialogPrompt_, width) << "\x1b[0m";
     at(4);
-    const auto shownInput = dialog_ == Dialog::CentralPassword
+    const auto shownInput = dialog_ == Dialog::CentralPassword || dialog_ == Dialog::Pin
                                 ? QString(dialogInput_.size(), u'*')
                                 : dialogInput_;
     terminalOutput << "\x1b[1;36m" << boxedLine(QStringLiteral("> %1").arg(shownInput), width) << "\x1b[0m";
@@ -1705,7 +1858,9 @@ void TerminalUi::redraw()
         else if (row - 1 < hosts.size()) {
             const auto &host = hosts.at(row - 1);
             left = QStringLiteral("│%1 %2").arg(row - 1 == selectedHost_ ? u'>' : u' ')
-                       .arg((host.web ? QStringLiteral("%1 (Web)").arg(host.nickname) : host.nickname)
+                       .arg((host.devices > 1 ? QStringLiteral("%1 (%2 devices)").arg(host.nickname).arg(host.devices)
+                             : host.web      ? QStringLiteral("%1 (Web)").arg(host.nickname)
+                                             : host.nickname)
                             + (host.away ? QStringLiteral(" (away)") : QString()));
         } else if (row == hosts.size() + 1 && hosts.isEmpty()) {
             left = central_.isActive() && !central_.isReady() ? QStringLiteral("│ (connecting...)")
@@ -1892,7 +2047,9 @@ void TerminalUi::printHosts() const
     }
     QStringList lines{QStringLiteral("Discovered hosts:")};
     for (int i = 0; i < hosts.size(); ++i) {
-        lines << (hosts[i].web
+        lines << (hosts[i].devices > 1
+                      ? QStringLiteral("  %1. %2 (%3 devices)").arg(i + 1).arg(hosts[i].nickname).arg(hosts[i].devices)
+                  : hosts[i].web
                       ? QStringLiteral("  %1. %2 (Web)").arg(i + 1).arg(hosts[i].nickname)
                       : QStringLiteral("  %1. %2 (%3:%4)").arg(i + 1).arg(hosts[i].nickname, hosts[i].address.toString()).arg(hosts[i].port))
                  + (hosts[i].away ? QStringLiteral(" (away)") : QString());
@@ -1921,6 +2078,9 @@ QString TerminalUi::conversationTitle(const Conversation &conversation) const
                               ? (address.isEmpty() ? conversation.title : address)
                               : conversation.session->peerIsWebClient()
                                   ? QStringLiteral("%1 (Web)").arg(peer)
+                              // Signed in with a PIN, possibly on several devices.
+                              : conversation.session->peerHasAccount()
+                                  ? peer
                                   : (address.isEmpty()
                                          ? peer
                                          : QStringLiteral("%1 (%2)").arg(peer, address));

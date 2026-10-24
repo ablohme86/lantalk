@@ -2,15 +2,18 @@
 
 #include "appconfig.h"
 
+#include "central/accountstore.h"
 #include "central/centralserver.h"
 #include "central/translationservice.h"
 #include "messagetranslator.h"
 #include "protocol/centralclient.h"
 #include "protocol/centralprotocol.h"
+#include "protocol/chathistory.h"
 
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QUuid>
 
 using namespace TestSupport;
 
@@ -24,6 +27,8 @@ public:
               quint16 listenPort = DefaultPort, const QString &password = {})
       : nickname_(nickname) {
     client_.setReconnectInterval(100);
+    // Each one is a device of its own.
+    client_.setDeviceId(QUuid::createUuid().toString(QUuid::WithoutBraces));
     QObject::connect(&client_, &CentralClient::incomingConnection,
                      owner_.get(), [this](RelayTransport *transport) {
                        auto *session =
@@ -56,6 +61,23 @@ private:
   std::unique_ptr<QObject> owner_ = std::make_unique<QObject>();
   CentralClient client_;
 };
+
+// As on a device that has never signed in with a PIN; the test's clients
+// share their settings.
+void forgetPins() { QSettings().remove(QStringLiteral("central/pins")); }
+
+std::optional<CentralClient::Peer> peerNamed(CentralClient &client,
+                                             const QString &nickname) {
+  for (const auto &peer : client.peers()) {
+    if (peer.nickname == nickname) return peer;
+  }
+  return std::nullopt;
+}
+
+int devicesOf(CentralClient &client, const QString &nickname) {
+  const auto peer = peerNamed(client, nickname);
+  return peer ? peer->devices : 0;
+}
 
 bool hasPeer(CentralClient &client, const QString &nickname) {
   for (const auto &peer : client.peers()) {
@@ -300,7 +322,8 @@ private slots:
     QTest::qWait(1500);
     QCOMPARE(server.channelCount(), 1);
 
-    // Reading now brings every line, in order.
+    // Reading now brings every line, in order, on the receiver's channel.
+    QByteArray channel;
     int lines = 0;
     QElapsedTimer timer;
     timer.start();
@@ -311,7 +334,8 @@ private slots:
       while ((newline = received.indexOf('\n')) >= 0) {
         const auto line = received.left(newline);
         received.remove(0, newline + 1);
-        if (line.startsWith("CENTRAL_DATA flow-1 L")) {
+        if (line.startsWith("CENTRAL_INCOMING ")) channel = line.split(' ').value(1);
+        if (!channel.isEmpty() && line.startsWith("CENTRAL_DATA " + channel + " L")) {
           QCOMPARE(line.split(' ').value(2), QByteArray("L") + QByteArray::number(lines));
           ++lines;
         }
@@ -482,6 +506,242 @@ private slots:
     QVERIFY(!CentralProtocol::sameProof(
         proof, CentralProtocol::authProof(QStringLiteral("a"), "n2")));
     QCOMPARE(CentralProtocol::authProof({}, "n1"), QByteArray("-"));
+  }
+
+  void pinProtectsTheNickname() {
+    QTemporaryDir data;
+    CentralServer server;
+    QVERIFY(server.setDataDirectory(data.path()));
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    const auto port = server.serverPort();
+    CentralPeer laptop(QStringLiteral("alice"), port);
+    QTRY_COMPARE(laptop.client().accountState(),
+                 CentralClient::AccountState::Unprotected);
+    QVERIFY(!laptop.client().setPin(QStringLiteral("12a4")));
+    QVERIFY(laptop.client().setPin(QStringLiteral("1234")));
+    QTRY_COMPARE(laptop.client().accountState(),
+                 CentralClient::AccountState::Protected);
+    QVERIFY(laptop.client().hasSavedPin());
+
+    // Another device has to know the PIN.
+    forgetPins();
+    CentralPeer phone(QStringLiteral("Alice"), port);
+    QSignalSpy asked(&phone.client(), &CentralClient::pinRequired);
+    QTRY_COMPARE(asked.size(), 1);
+    QCOMPARE(asked.first().first().toString(), QStringLiteral("missing"));
+    QVERIFY(!phone.client().isReady());
+    phone.client().signInWithPin(QStringLiteral("4321"));
+    QTRY_COMPARE(asked.size(), 2);
+    QCOMPARE(asked.last().first().toString(), QStringLiteral("wrong"));
+    QVERIFY(!phone.client().hasSavedPin());
+    phone.client().signInWithPin(QStringLiteral("1234"));
+    QTRY_VERIFY(phone.client().isReady());
+    QCOMPARE(phone.client().accountState(), CentralClient::AccountState::Protected);
+    QVERIFY(laptop.client().isReady());
+
+    // Everyone else sees one alice on two devices.
+    CentralPeer bob(QStringLiteral("bob"), port);
+    QTRY_VERIFY(hasPeer(bob.client(), QStringLiteral("alice")));
+    QTRY_COMPARE(devicesOf(bob.client(), QStringLiteral("alice")), 2);
+    QCOMPARE(bob.client().peers().size(), 1);
+    QVERIFY(peerNamed(bob.client(), QStringLiteral("alice"))->account);
+    QVERIFY(!hasPeer(laptop.client(), QStringLiteral("alice")));
+
+    // An older LANTalk cannot use the nickname.
+    RawPeer old(port);
+    QTRY_VERIFY(!old.lines().isEmpty());
+    old.send(QStringLiteral("CENTRAL_HELLO 1 %1 45454 -")
+                 .arg(QString::fromLatin1(
+                     CentralProtocol::encodeField(QStringLiteral("alice")))));
+    QTRY_VERIFY(old.lines().join(u'\n').contains(QStringLiteral("CENTRAL_REJECT")));
+    QVERIFY(CentralProtocol::decodeField(old.lines().last().section(u' ', 1))
+                .contains(QStringLiteral("protected with a PIN")));
+    QTRY_COMPARE(server.clientCount(), 3);
+
+    // Five wrong PINs lock the nickname for a while.
+    forgetPins();
+    CentralPeer guesser(QStringLiteral("alice"), port);
+    QSignalSpy guesses(&guesser.client(), &CentralClient::pinRequired);
+    QTRY_COMPARE(guesses.size(), 1);
+    for (int attempt = 0; attempt < 5; ++attempt) {
+      guesser.client().signInWithPin(QStringLiteral("000%1").arg(attempt));
+      QTRY_COMPARE(guesses.size(), attempt + 2);
+    }
+    guesser.client().signInWithPin(QStringLiteral("1234"));
+    QTRY_COMPARE(guesses.size(), 7);
+    QCOMPARE(guesses.last().first().toString(), QStringLiteral("locked"));
+  }
+
+  void everyDeviceTakesPartInTheConversation() {
+    QTemporaryDir data;
+    CentralServer server;
+    QVERIFY(server.setDataDirectory(data.path()));
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    const auto port = server.serverPort();
+    CentralPeer laptop(QStringLiteral("alice"), port);
+    QTRY_COMPARE(laptop.client().accountState(),
+                 CentralClient::AccountState::Unprotected);
+    QVERIFY(laptop.client().setPin(QStringLiteral("2468")));
+    QTRY_COMPARE(laptop.client().accountState(),
+                 CentralClient::AccountState::Protected);
+    // The PIN is saved, as the phone's own sign-in would have saved it.
+    CentralPeer phone(QStringLiteral("alice"), port);
+    QTRY_COMPARE(phone.client().accountState(),
+                 CentralClient::AccountState::Protected);
+    CentralPeer bob(QStringLiteral("bob"), port);
+    QTRY_COMPARE(devicesOf(bob.client(), QStringLiteral("alice")), 2);
+
+    auto *toAlice = bob.connectTo(QStringLiteral("alice"));
+    QTRY_VERIFY(toAlice->isHandshakeComplete());
+    QVERIFY(toAlice->peerHasAccount());
+    QTRY_COMPARE(laptop.incoming().size(), 1);
+    QTRY_COMPARE(phone.incoming().size(), 1);
+    auto *onLaptop = laptop.incoming().first();
+    auto *onPhone = phone.incoming().first();
+    QTRY_VERIFY(onLaptop->isHandshakeComplete());
+    QTRY_VERIFY(onPhone->isHandshakeComplete());
+    QCOMPARE(onPhone->peerName(), QStringLiteral("bob"));
+
+    QSignalSpy laptopReceived(onLaptop, &ChatSession::messageReceived);
+    QSignalSpy phoneReceived(onPhone, &ChatSession::messageReceived);
+    toAlice->sendMessage(QStringLiteral("Hei Alice"));
+    QTRY_COMPARE(laptopReceived.size(), 1);
+    QTRY_COMPARE(phoneReceived.size(), 1);
+
+    // What one device sends reaches bob once and the other device as sent.
+    QSignalSpy bobReceived(toAlice, &ChatSession::messageReceived);
+    QSignalSpy mirrored(onPhone, &ChatSession::messageMirrored);
+    onLaptop->sendMessage(QStringLiteral("Hello Bob"), QStringLiteral("Hei Bob"));
+    QTRY_COMPARE(bobReceived.size(), 1);
+    QTRY_COMPARE(mirrored.size(), 1);
+    QCOMPARE(mirrored.first().at(0).toString(), QStringLiteral("Hello Bob"));
+    QCOMPARE(mirrored.first().at(1).toString(), QStringLiteral("Hei Bob"));
+    QTest::qWait(200);
+    QCOMPARE(bobReceived.size(), 1);
+
+    // Live Translate turned on from one device is on for the other.
+    QSignalSpy adopted(onPhone, &ChatSession::liveTranslationAdopted);
+    QSignalSpy granted(onLaptop, &ChatSession::liveTranslationGranted);
+    QSignalSpy bobSees(toAlice, &ChatSession::peerLiveTranslationChanged);
+    onLaptop->requestLiveTranslation(QStringLiteral("Norwegian Bokmål"),
+                                     QStringLiteral("English"));
+    QTRY_COMPARE(granted.size(), 1);
+    QTRY_COMPARE(adopted.size(), 1);
+    QCOMPARE(adopted.first().at(0).toString(), QStringLiteral("Norwegian Bokmål"));
+    QVERIFY(onPhone->liveTranslationActiveOrPending());
+    QTRY_COMPARE(bobSees.size(), 1);
+    QSignalSpy stopped(onLaptop, &ChatSession::liveTranslationStopped);
+    onPhone->stopLiveTranslation();
+    QTRY_COMPARE(stopped.size(), 1);
+    QVERIFY(!onLaptop->liveTranslationActiveOrPending());
+    QTRY_COMPARE(bobSees.size(), 2);
+    QCOMPARE(bobSees.last().first().toBool(), false);
+
+    // A new device catches up on the history before it joins in.
+    QSettings().remove(QStringLiteral("central/synced"));
+    CentralPeer tablet(QStringLiteral("alice"), port);
+    QSignalSpy history(&tablet.client(), &CentralClient::historyEntryAdded);
+    QTRY_COMPARE(history.size(), 2);
+    const auto first = history.first().at(2).value<ChatHistory::Entry>();
+    const auto second = history.last().at(2).value<ChatHistory::Entry>();
+    QCOMPARE(first.sender, QStringLiteral("bob"));
+    QCOMPARE(first.message, QStringLiteral("Hei Alice"));
+    QCOMPARE(second.sender, QStringLiteral("You"));
+    QCOMPARE(second.message, QStringLiteral("Hei Bob"));
+    QCOMPARE(second.alternate, QStringLiteral("Hello Bob"));
+    QTRY_COMPARE(tablet.incoming().size(), 1);
+    QTRY_VERIFY(tablet.incoming().first()->isHandshakeComplete());
+    QCOMPARE(tablet.incoming().first()->peerName(), QStringLiteral("bob"));
+    QCOMPARE(ChatHistory::load(tablet.incoming().first()->peerAddress(),
+                               QStringLiteral("bob"), -1)
+                 .size(),
+             2);
+
+    // Devices come and go without bob noticing.
+    QSignalSpy bobDisconnected(toAlice, &ChatSession::disconnected);
+    laptop.client().stop();
+    QTRY_COMPARE(devicesOf(bob.client(), QStringLiteral("alice")), 2);
+    QSignalSpy tabletReceived(tablet.incoming().first(), &ChatSession::messageReceived);
+    toAlice->sendMessage(QStringLiteral("Fortsatt her?"));
+    QTRY_COMPARE(tabletReceived.size(), 1);
+    QCOMPARE(bobDisconnected.size(), 0);
+    // Bob leaving ends it everywhere.
+    QSignalSpy phoneDisconnected(onPhone, &ChatSession::disconnected);
+    toAlice->closeConnection();
+    QTRY_COMPARE(phoneDisconnected.size(), 1);
+    QTRY_COMPARE(server.channelCount(), 0);
+  }
+
+  void pinsAndHistorySurviveARestart() {
+    QTemporaryDir data;
+    quint16 port = 0;
+    {
+      CentralServer server;
+      QVERIFY(server.setDataDirectory(data.path()));
+      QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+      port = server.serverPort();
+      CentralPeer alice(QStringLiteral("alice"), port);
+      QTRY_COMPARE(alice.client().accountState(),
+                   CentralClient::AccountState::Unprotected);
+      QVERIFY(alice.client().setPin(QStringLiteral("1357")));
+      QTRY_COMPARE(alice.client().accountState(),
+                   CentralClient::AccountState::Protected);
+      CentralPeer bob(QStringLiteral("bob"), port);
+      QTRY_VERIFY(hasPeer(bob.client(), QStringLiteral("alice")));
+      auto *outgoing = bob.connectTo(QStringLiteral("alice"));
+      QTRY_VERIFY(outgoing->isHandshakeComplete());
+      QTRY_COMPARE(alice.incoming().size(), 1);
+      QSignalSpy received(alice.incoming().first(), &ChatSession::messageReceived);
+      outgoing->sendMessage(QStringLiteral("Lagret?"));
+      QTRY_COMPARE(received.size(), 1);
+    }
+    CentralServer server;
+    QVERIFY(server.setDataDirectory(data.path()));
+    QVERIFY(server.listen(QHostAddress::LocalHost, port));
+    forgetPins();
+    CentralPeer alice(QStringLiteral("alice"), port);
+    QSignalSpy asked(&alice.client(), &CentralClient::pinRequired);
+    QTRY_COMPARE(asked.size(), 1);
+
+    AccountStore store;
+    QVERIFY(store.open(data.path()));
+    const auto account = store.find(QStringLiteral("ALICE"));
+    QVERIFY(account);
+    const auto entries = store.entriesAfter(*account, 0);
+    QCOMPARE(entries.size(), 1);
+    QCOMPARE(entries.first().value(QStringLiteral("message")).toString(),
+             QStringLiteral("Lagret?"));
+    QCOMPARE(entries.first().value(QStringLiteral("peer")).toString(),
+             QStringLiteral("bob"));
+    QVERIFY(store.remove(QStringLiteral("alice")));
+    QVERIFY(!store.find(QStringLiteral("alice")));
+    QVERIFY(store.entriesAfter(*account, 0).isEmpty());
+  }
+
+  void signsInToALantalkdFromBeforePins() {
+    // lantalkd 1.13 and older only read CENTRAL_HELLO 1.
+    QTcpServer old;
+    QVERIFY(old.listen(QHostAddress::LocalHost, 0));
+    QObject::connect(&old, &QTcpServer::newConnection, &old, [&old] {
+      auto *socket = old.nextPendingConnection();
+      socket->write("CENTRAL_CHALLENGE 00ff\n");
+      QObject::connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+        const auto parts = socket->readLine().trimmed().split(' ');
+        if (parts.size() != 5) {
+          socket->write("CENTRAL_REJECT " +
+                        CentralProtocol::encodeField(QStringLiteral(
+                            "The central host could not read the sign-in.")) +
+                        '\n');
+          socket->disconnectFromHost();
+          return;
+        }
+        socket->write("CENTRAL_WELCOME old-1 127.0.0.1\n");
+      });
+    });
+    CentralPeer alice(QStringLiteral("alice"), old.serverPort());
+    QTRY_VERIFY(alice.client().isReady());
+    QCOMPARE(alice.client().accountState(),
+             CentralClient::AccountState::Unavailable);
   }
 
   void silentClientsAreDropped() {

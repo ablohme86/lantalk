@@ -8,6 +8,9 @@ Wants=network-online.target
 EnvironmentFile=-@SYSCONFDIR@/lantalk/lantalkd.conf
 ExecStart=@BINDIR@/lantalkd $LANTALKD_OPTIONS
 DynamicUser=yes
+# Personal PINs and the history lantalkd keeps: /var/lib/lantalkd.
+StateDirectory=lantalkd
+StateDirectoryMode=0700
 Restart=on-failure
 RestartSec=5
 

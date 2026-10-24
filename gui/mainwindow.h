@@ -18,6 +18,7 @@
 #include <QUdpSocket>
 #include <QUuid>
 
+class QAction;
 class QLabel;
 class QListWidget;
 class QListWidgetItem;
@@ -77,6 +78,13 @@ private:
   void acceptRelayConnection(RelayTransport *transport);
   void adoptIncomingSession(ChatSession *session, quint16 port);
   void updateCentralStatus();
+  // Offers a personal PIN once a central host lets this nickname have one.
+  void updateAccountState();
+  void askForPin(const QString &reason);
+  void showPinDialog(int mode, const QString &message = {});
+  void showSyncedEntry(const QString &address, const QString &nickname,
+                       const ChatHistory::Entry &entry);
+  QString pinOfferKey() const;
   void setupTrayIcon();
   void updateTrayIcon();
   void showFromTray();
@@ -126,6 +134,10 @@ private:
   QHash<QString, DiscoveredHost> discoveredHosts_;
   // The sidebar of available hosts, as in the TUI and the web client.
   QSet<QString> centralPeersSeen_;
+  QAction *pinAction_ = nullptr;
+  bool pinDialogOpen_ = false;
+  bool pinOffered_ = false;
+  bool pinRequested_ = false;
   QElapsedTimer lastActivity_;
   QTimer awayTimer_;
   bool away_ = false;

@@ -38,6 +38,29 @@ private:
   QDialogButtonBox *buttons_;
 };
 
+// A personal PIN for a nickname on the central host: choosing one (to use
+// the nickname on several devices), entering it, or changing it.
+class PinDialog final : public QDialog {
+public:
+  enum class Mode { Create, Enter, Change };
+  // `message` replaces the usual explanation, e.g. after a wrong PIN.
+  PinDialog(Mode mode, const QString &nickname, const QString &message = {},
+            QWidget *parent = nullptr);
+  QString pin() const;
+  // "Not now" when offered a PIN.
+  bool declined() const;
+
+private:
+  void updateState();
+
+  Mode mode_;
+  QLineEdit *pin_;
+  QLineEdit *confirmation_ = nullptr;
+  QLabel *mismatch_ = nullptr;
+  QDialogButtonBox *buttons_;
+  bool declined_ = false;
+};
+
 class SettingsDialog final : public QDialog {
 public:
   explicit SettingsDialog(QWidget *parent = nullptr);

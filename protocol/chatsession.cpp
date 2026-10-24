@@ -111,6 +111,8 @@ void ChatSession::setupSocket() {
     }
   });
   connect(transport_, &ChatTransport::readyRead, this, &ChatSession::readData);
+  connect(transport_, &ChatTransport::mirrored, this,
+          &ChatSession::processMirroredLine);
   connect(transport_, &ChatTransport::bytesWritten, this, [this](qint64) {
     if (outgoingFile_ && transport_->bytesToWrite() < 128 * 1024 &&
         !outgoingFilePump_.isActive()) {
@@ -208,6 +210,7 @@ void ChatSession::resetConnectionState() {
   translationActive_ = false;
   peerTranslationActive_ = false;
   translationRequestId_.clear();
+  mirroredRequest_ = false;
   for (const auto &id : incomingFiles_.keys()) {
     discardIncomingFile(id, QStringLiteral("The connection closed."));
   }
@@ -244,6 +247,7 @@ void ChatSession::notifyDisconnected() {
   translationActive_ = false;
   peerTranslationActive_ = false;
   translationRequestId_.clear();
+  mirroredRequest_ = false;
   resetTypingState();
   peerSupportsTyping_ = false;
   emit disconnected();
@@ -295,7 +299,7 @@ void ChatSession::discardIncomingFile(const QString &id, const QString &reason) 
   if (!transfer.file) return;
   transfer.file->close();
   transfer.file->remove();
-  emit fileTransferFailed(id, false, reason);
+  emit fileTransferFailed(id, transfer.mirrored, reason);
 }
 
 bool ChatSession::sendFile(const QString &filePath) {
@@ -467,6 +471,7 @@ void ChatSession::requestLiveTranslation(const QString &sourceLanguage,
   if (translationActive_ || !translationRequestId_.isEmpty()) {
     return;
   }
+  mirroredRequest_ = false;
   translationRequestId_ = QUuid::createUuid().toString(QUuid::WithoutBraces);
   const auto source =
       sourceLanguage.toUtf8().toBase64(QByteArray::Base64UrlEncoding);
@@ -548,6 +553,9 @@ void ChatSession::resetTypingState() {
 QString ChatSession::peerName() const { return peerName_; }
 bool ChatSession::peerIsWebClient() const {
   return transport_->peerIsWebClient();
+}
+bool ChatSession::peerHasAccount() const {
+  return transport_->peerHasAccount();
 }
 QString ChatSession::identityName() const { return identityName_; }
 QString ChatSession::peerAddress() const {
@@ -753,12 +761,17 @@ void ChatSession::processLine(const QString &line) {
       parts.size() == 2 && parts.at(1) == translationRequestId_) {
     translationRequestId_.clear();
     translationActive_ = true;
+    if (std::exchange(mirroredRequest_, false)) {
+      emit liveTranslationAdopted(mirroredSource_, mirroredTarget_);
+    }
     emit liveTranslationGranted();
     return;
   }
   if (parts.value(0) == QStringLiteral("TRANSLATE_REJECT") &&
       parts.size() == 2 && parts.at(1) == translationRequestId_) {
     translationRequestId_.clear();
+    // Another device's request was its business.
+    if (std::exchange(mirroredRequest_, false)) return;
     emit liveTranslationDenied(
         QStringLiteral("Live Translate is already active for the other user."));
     return;
@@ -777,8 +790,13 @@ void ChatSession::processLine(const QString &line) {
     }
     return;
   }
-  if (parts.value(0) == QStringLiteral("FILE_BEGIN") && parts.size() == 5 &&
-      handshakeComplete_) {
+  if (handshakeComplete_ && processFileLine(parts, false)) return;
+  emit statusChanged(
+      QStringLiteral("Received unsupported LANCHAT PROTOCOL command."));
+}
+
+bool ChatSession::processFileLine(const QStringList &parts, bool mirrored) {
+  if (parts.value(0) == QStringLiteral("FILE_BEGIN") && parts.size() == 5) {
     bool sizeIsValid = false;
     const auto size = parts.at(4).toLongLong(&sizeIsValid);
     const auto name = QByteArray::fromBase64(parts.at(2).toLatin1(),
@@ -790,7 +808,7 @@ void ChatSession::processLine(const QString &line) {
         safeName.isEmpty() || safeName == QStringLiteral(".") ||
         safeName == QStringLiteral("..") || mime.isEmpty()) {
       emit statusChanged(QStringLiteral("Rejected invalid file transfer."));
-      return;
+      return true;
     }
     const auto cacheDirectory =
         QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
@@ -803,44 +821,44 @@ void ChatSession::processLine(const QString &line) {
     if (directory.isEmpty() || !QDir().mkpath(directory) ||
         !file->open(QIODevice::WriteOnly)) {
       emit statusChanged(QStringLiteral("Cannot save received file."));
-      return;
+      return true;
     }
-    incomingFiles_.insert(
-        parts.at(1), {safeName, QString::fromUtf8(mime), size, file});
-    emit fileTransferProgress(parts.at(1), safeName, false, 0);
-    return;
+    IncomingFile transfer{safeName, QString::fromUtf8(mime), size, file};
+    transfer.mirrored = mirrored;
+    incomingFiles_.insert(parts.at(1), transfer);
+    emit fileTransferProgress(parts.at(1), safeName, mirrored, 0);
+    return true;
   }
-  if (parts.value(0) == QStringLiteral("FILE_CHUNK") && parts.size() == 3 &&
-      handshakeComplete_) {
+  if (parts.value(0) == QStringLiteral("FILE_CHUNK") && parts.size() == 3) {
     auto transfer = incomingFiles_.find(parts.at(1));
     if (transfer == incomingFiles_.end()) {
-      return;
+      return true;
     }
     const auto chunk = QByteArray::fromBase64(parts.at(2).toLatin1(),
                                               QByteArray::Base64UrlEncoding);
     if (chunk.isEmpty() || transfer->received + chunk.size() > transfer->size) {
       emit statusChanged(QStringLiteral("Rejected invalid file data."));
       discardIncomingFile(parts.at(1), QStringLiteral("Rejected invalid file data."));
-      return;
+      return true;
     }
     if (transfer->file->write(chunk) != chunk.size()) {
       emit statusChanged(QStringLiteral("Cannot save received file."));
       discardIncomingFile(parts.at(1), QStringLiteral("Cannot save received file."));
-      return;
+      return true;
     }
     transfer->received += chunk.size();
     const int percent = int(transfer->received * 100 / transfer->size);
     if (percent != transfer->percent) {
       transfer->percent = percent;
-      emit fileTransferProgress(parts.at(1), transfer->name, false, percent);
+      emit fileTransferProgress(parts.at(1), transfer->name, transfer->mirrored,
+                                percent);
     }
-    return;
+    return true;
   }
-  if (parts.value(0) == QStringLiteral("FILE_END") && parts.size() == 2 &&
-      handshakeComplete_) {
+  if (parts.value(0) == QStringLiteral("FILE_END") && parts.size() == 2) {
     auto transfer = incomingFiles_.find(parts.at(1));
     if (transfer == incomingFiles_.end()) {
-      return;
+      return true;
     }
     if (transfer->received != transfer->size || !transfer->file->flush()) {
       const auto reason = transfer->received != transfer->size
@@ -848,17 +866,62 @@ void ChatSession::processLine(const QString &line) {
                               : QStringLiteral("Cannot save received file.");
       emit statusChanged(reason);
       discardIncomingFile(parts.at(1), reason);
-      return;
+      return true;
     }
     const auto completed = incomingFiles_.take(parts.at(1));
     completed.file->close();
     receivedFilePaths_.append(completed.file->fileName());
-    emit fileReceived(completed.name, completed.file->fileName(),
-                      completed.mimeType, parts.at(1));
+    if (completed.mirrored) {
+      emit fileSent(completed.name, completed.file->fileName(),
+                    completed.mimeType, parts.at(1));
+    } else {
+      emit fileReceived(completed.name, completed.file->fileName(),
+                        completed.mimeType, parts.at(1));
+    }
+    return true;
+  }
+  return false;
+}
+
+void ChatSession::processMirroredLine(const QString &line) {
+  const auto parts = line.trimmed().split(u' ', Qt::KeepEmptyParts);
+  const auto &name = parts.value(0);
+  if (name == QStringLiteral("MESSAGE") &&
+      (parts.size() == 2 ||
+       (parts.size() == 4 && parts.at(2) == QStringLiteral("ORG_LANG")))) {
+    const auto message = QByteArray::fromBase64(parts.at(1).toLatin1(),
+                                                QByteArray::Base64UrlEncoding);
+    const auto originalMessage =
+        parts.size() == 4 ? QByteArray::fromBase64(parts.at(3).toLatin1(),
+                                                   QByteArray::Base64UrlEncoding)
+                          : QByteArray();
+    if (!message.isEmpty()) {
+      emit messageMirrored(QString::fromUtf8(message),
+                           QString::fromUtf8(originalMessage));
+    }
     return;
   }
-  emit statusChanged(
-      QStringLiteral("Received unsupported LANCHAT PROTOCOL command."));
+  if (name == QStringLiteral("TRANSLATE_REQUEST") && parts.size() == 4) {
+    // The peer's TRANSLATE_GRANTED comes to every device of this account.
+    if (translationActive_) return;
+    translationRequestId_ = parts.at(1);
+    mirroredRequest_ = true;
+    mirroredSource_ = QString::fromUtf8(QByteArray::fromBase64(
+        parts.at(2).toLatin1(), QByteArray::Base64UrlEncoding));
+    mirroredTarget_ = QString::fromUtf8(QByteArray::fromBase64(
+        parts.at(3).toLatin1(), QByteArray::Base64UrlEncoding));
+    return;
+  }
+  if (name == QStringLiteral("TRANSLATE_STOP") ||
+      name == QStringLiteral("TRANSLATE_CANCEL")) {
+    if (!translationActive_ && translationRequestId_.isEmpty()) return;
+    translationActive_ = false;
+    translationRequestId_.clear();
+    mirroredRequest_ = false;
+    emit liveTranslationStopped();
+    return;
+  }
+  processFileLine(parts, true);
 }
 
 void ChatSession::sendLine(const QString &line) {

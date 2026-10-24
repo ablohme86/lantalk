@@ -17,12 +17,19 @@
 // The service opens with CENTRAL_CHALLENGE <nonce>. A service started with a
 // password only accepts a CENTRAL_HELLO whose proof is authProof(password,
 // nonce), so the password itself never crosses the network.
+//
+// Version 2 adds personal PINs. A nickname protected with a PIN is an account:
+// its devices sign in with CENTRAL_HELLO 2 ... <pinProof> <deviceId>, all of
+// them appear as one peer, lantalkd hands every conversation to each of them,
+// mirrors what one device sends to the others (CENTRAL_MIRROR), and keeps the
+// account's history so a device can catch up (CENTRAL_SYNC, CENTRAL_HISTORY).
 namespace CentralProtocol {
 
 inline constexpr quint16 DefaultCentralPort = 45455;
 // lantalkd serves the web client for browsers on this port.
 inline constexpr quint16 DefaultWebPort = 45456;
-inline constexpr int Version = 1;
+inline constexpr int Version = 2;
+inline constexpr int PinLength = 4;
 // Clients ping this often; either side drops a connection that has been
 // silent for IdleTimeoutMs.
 inline constexpr int PingIntervalMs = 30 * 1000;
@@ -108,6 +115,32 @@ inline bool sameProof(const QByteArray &left, const QByteArray &right) {
     difference |= char(left.at(index) ^ right.at(index));
   }
   return difference == 0;
+}
+
+// What lantalkd stores for a PIN and a device proves it knows. A four-digit
+// PIN keeps others from signing in with a nickname by accident or on a whim;
+// it is no protection against someone who records the network traffic.
+inline QByteArray pinVerifier(const QString &pin) {
+  return QCryptographicHash::hash("LANTALK_PIN " + pin.toUtf8(),
+                                  QCryptographicHash::Sha256)
+      .toHex();
+}
+
+inline bool isValidPin(const QString &pin) {
+  if (pin.size() != PinLength) return false;
+  for (const auto character : pin) {
+    if (character < u'0' || character > u'9') return false;
+  }
+  return true;
+}
+
+// HMAC-SHA256 of the challenge, keyed with the PIN verifier, in hex; "-"
+// without a PIN.
+inline QByteArray pinProof(const QByteArray &verifier, const QByteArray &nonce) {
+  if (verifier.isEmpty()) return QByteArrayLiteral("-");
+  return QMessageAuthenticationCode::hash("LANTALK_PIN " + nonce, verifier,
+                                          QCryptographicHash::Sha256)
+      .toHex();
 }
 
 inline bool isValidChannelId(const QString &id) {

@@ -55,6 +55,18 @@ TranslationRestorer::TranslationRestorer(ChatSession *session, QObject *parent)
     connect(&ollama_, &OllamaClient::availabilityChecked, this, &TranslationRestorer::availabilityChecked);
     connect(session_, &ChatSession::peerIdentified, this, &TranslationRestorer::attemptResume);
     connect(session_, &ChatSession::disconnected, this, [this] { retryTimer_.stop(); });
+    // Another device of this account turned it on or off here.
+    connect(session_, &ChatSession::liveTranslationAdopted, this,
+            [this](const QString &myLanguage, const QString &peerLanguage) {
+        requestedMyLanguage_ = myLanguage;
+        requestedPeerLanguage_ = peerLanguage;
+    });
+    connect(session_, &ChatSession::liveTranslationStopped, this, [this] {
+        auto preference = savedPreference();
+        if (!preference.enabled) return;
+        preference.enabled = false;
+        TranslationSettings::save(session_->peerAddress(), session_->identityName(), preference);
+    });
     connect(session_, &ChatSession::liveTranslationGranted, this, [this] {
         if (requestedMyLanguage_.isEmpty() || requestedPeerLanguage_.isEmpty()) return;
         TranslationSettings::save(session_->peerAddress(), session_->identityName(),

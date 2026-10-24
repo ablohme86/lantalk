@@ -42,6 +42,8 @@ private:
     // Signed in from lantalkd's web client.
     bool web = false;
     bool away = false;
+    // Signed in with a PIN on this many devices.
+    int devices = 1;
   };
 
   struct Conversation {
@@ -65,7 +67,9 @@ private:
 
   enum class Focus { Hosts, Chat, Conversations, Menu };
   enum class Menu { None, Chat, Settings };
-  enum class Dialog { None, Connect, Nickname, OllamaUrl, OllamaModel, ListenPort, CentralHost, CentralPassword, CloseChat, Quit };
+  enum class Dialog { None, Connect, Nickname, OllamaUrl, OllamaModel, ListenPort, CentralHost, CentralPassword, Pin, CloseChat, Quit };
+  // What Dialog::Pin and /pin do: protect the nickname, sign in, or change it.
+  enum class PinMode { Create, Enter, Change };
 
   void configureNickname();
   void configureTerminal();
@@ -77,6 +81,10 @@ private:
   void startDiscovery();
   void stopDiscovery();
   void reportCentralState();
+  void updateAccountState();
+  void askForPin(const QString &reason);
+  void usePin(PinMode mode, const QString &pin);
+  QString pinOfferKey() const;
   void updateCentralTranslation();
   void reconnectArrivedPeers();
   // Any key counts as activity (see AwayAfterMs).
@@ -148,6 +156,8 @@ private:
       QUuid::createUuid().toString(QUuid::WithoutBraces);
   QHash<QString, DiscoveredHost> discoveredHosts_;
   QSet<QString> centralPeersSeen_;
+  PinMode pinMode_ = PinMode::Create;
+  bool pinOffered_ = false;
   QElapsedTimer lastActivity_;
   QTimer awayTimer_;
   QList<Conversation> conversations_;

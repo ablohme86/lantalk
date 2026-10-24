@@ -454,7 +454,7 @@ body.in-chat .chat { display: flex; }
 }
 .sheet-card h2 { margin: 0; font-size: 20px; }
 .sheet-card .subtle { color: var(--muted); font-size: 14px; margin: 0; }
-.sheet-card select, .sheet-card input[type="url"] {
+.sheet-card select, .sheet-card input[type="url"], .sheet-card input[type="password"] {
   width: 100%;
   min-height: 46px;
   padding: 0 12px;

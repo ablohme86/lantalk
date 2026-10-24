@@ -169,6 +169,14 @@ MainWindow::MainWindow() {
   settingsMenu->addSeparator();
   auto *settingsAction =
       settingsMenu->addAction(tr("General..."));
+  pinAction_ = settingsMenu->addAction(tr("Personal PIN..."));
+  pinAction_->setEnabled(false);
+  connect(pinAction_, &QAction::triggered, this, [this] {
+    showPinDialog(int(central_.accountState() ==
+                              CentralClient::AccountState::Protected
+                          ? PinDialog::Mode::Change
+                          : PinDialog::Mode::Create));
+  });
   applyDarkMenuStyle();
   connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
   connect(connectToAction, &QAction::triggered, this,
@@ -226,6 +234,15 @@ MainWindow::MainWindow() {
           &MainWindow::updateCentralStatus);
   connect(&central_, &CentralClient::translationAvailabilityChanged, this,
           &MainWindow::updateCentralTranslation);
+  connect(&central_, &CentralClient::accountStateChanged, this,
+          &MainWindow::updateAccountState);
+  connect(&central_, &CentralClient::pinRequired, this, &MainWindow::askForPin);
+  connect(&central_, &CentralClient::pinChanged, this, [this] {
+    statusBar()->showMessage(
+        tr("PIN changed. Use the new PIN on your other devices."), 8000);
+  });
+  connect(&central_, &CentralClient::historyEntryAdded, this,
+          &MainWindow::showSyncedEntry);
   // Ollama servers on the network make Live Translate available; look again
   // every few minutes.
   ollamaScanTimer_.setInterval(5 * 60 * 1000);
@@ -344,6 +361,8 @@ void MainWindow::applyNetworkMode() {
     }
   }
   const bool modeChanged = networkModeApplied_ && modeKey != networkModeKey_;
+  // Another host or nickname may let this one have a PIN.
+  if (modeChanged) pinOffered_ = false;
   networkModeKey_ = modeKey;
   networkModeApplied_ = true;
   if (!modeChanged) return;
@@ -374,6 +393,98 @@ void MainWindow::updateCentralStatus() {
         tr("Connecting to central host %1…").arg(central_.hostSpec()));
   }
   refreshHostList();
+}
+
+QString MainWindow::pinOfferKey() const {
+  const QSettings settings;
+  return QStringLiteral("central/pinDeclined/%1")
+      .arg(ConversationIdentity::digest(
+          central_.hostSpec(),
+          settings.value(QStringLiteral("profile/nickname")).toString()));
+}
+
+void MainWindow::updateAccountState() {
+  const auto state = central_.accountState();
+  pinAction_->setEnabled(state == CentralClient::AccountState::Unprotected ||
+                         state == CentralClient::AccountState::Protected);
+  pinAction_->setText(state == CentralClient::AccountState::Protected
+                          ? tr("Change PIN...")
+                          : tr("Personal PIN..."));
+  if (state == CentralClient::AccountState::Protected &&
+      std::exchange(pinRequested_, false)) {
+    statusBar()->showMessage(
+        tr("Your nickname is protected. Sign in with the PIN on your other "
+           "devices."),
+        10000);
+  }
+  if (state != CentralClient::AccountState::Unprotected || pinOffered_ ||
+      QSettings().value(pinOfferKey()).toBool()) {
+    return;
+  }
+  // Once per run; "Not now" stops asking for this host and nickname.
+  pinOffered_ = true;
+  QTimer::singleShot(0, this, [this] {
+    if (central_.accountState() == CentralClient::AccountState::Unprotected) {
+      showPinDialog(int(PinDialog::Mode::Create));
+    }
+  });
+}
+
+void MainWindow::askForPin(const QString &reason) {
+  const auto nickname =
+      QSettings().value(QStringLiteral("profile/nickname")).toString();
+  showPinDialog(int(PinDialog::Mode::Enter),
+                reason == QStringLiteral("wrong")
+                    ? tr("Wrong PIN for %1. Try again.").arg(nickname)
+                : reason == QStringLiteral("locked")
+                    ? tr("Too many wrong PINs for %1. Wait a few minutes and "
+                         "try again.")
+                          .arg(nickname)
+                    : QString());
+}
+
+void MainWindow::showPinDialog(int mode, const QString &message) {
+  if (pinDialogOpen_) return;
+  pinDialogOpen_ = true;
+  const auto pinMode = PinDialog::Mode(mode);
+  PinDialog dialog(pinMode,
+                   QSettings()
+                       .value(QStringLiteral("profile/nickname"),
+                              QStringLiteral("Guest"))
+                       .toString(),
+                   message, this);
+  const bool accepted = dialog.exec() == QDialog::Accepted;
+  pinDialogOpen_ = false;
+  if (!accepted) {
+    if (pinMode == PinDialog::Mode::Create && dialog.declined()) {
+      QSettings().setValue(pinOfferKey(), true);
+    }
+    return;
+  }
+  if (pinMode == PinDialog::Mode::Enter) {
+    central_.signInWithPin(dialog.pin());
+  } else {
+    pinRequested_ = pinMode == PinDialog::Mode::Create;
+    if (!central_.setPin(dialog.pin())) {
+      statusBar()->showMessage(tr("Not connected to the central host."), 5000);
+    }
+  }
+}
+
+void MainWindow::showSyncedEntry(const QString &address,
+                                 const QString &nickname,
+                                 const ChatHistory::Entry &entry) {
+  for (int index = 0; index < tabs_->count(); ++index) {
+    auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index));
+    if (!tab || !ConversationIdentity::sameAddress(tab->session()->peerAddress(), address) ||
+        !ConversationIdentity::sameNickname(tab->peerNickname(), nickname)) {
+      continue;
+    }
+    if (tab->showSyncedEntry(entry) && entry.sender != QStringLiteral("You") &&
+        tabs_->currentWidget() != tab) {
+      setTabUnread(tab, true);
+    }
+  }
 }
 
 void MainWindow::showFontSizeDialog() {
@@ -840,14 +951,15 @@ void MainWindow::sendDiscoveryProbeBatch() {
 
 void MainWindow::refreshHostList() {
   auto hosts = discoveredHosts_.values();
-  QSet<QString> webClients;
+  QHash<QString, CentralClient::Peer> centralPeers;
   if (central_.isActive()) {
     // The central host lists the clients connected to it instead.
     hosts.clear();
     for (const auto &peer : central_.peers()) {
       hosts.append({peer.nickname, QHostAddress(peer.address), peer.port,
                     QDateTime::currentDateTimeUtc()});
-      if (peer.web) webClients.insert(peer.address + u'\n' + peer.nickname);
+      centralPeers.insert(QHostAddress(peer.address).toString() + u'\n' + peer.nickname,
+                          peer);
     }
   }
   std::sort(hosts.begin(), hosts.end(),
@@ -866,7 +978,16 @@ void MainWindow::refreshHostList() {
   }
   for (const auto &host : hosts) {
     const auto address = host.address.toString();
-    const bool web = webClients.contains(address + u'\n' + host.nickname);
+    const auto centralPeer = centralPeers.value(address + u'\n' + host.nickname);
+    const bool web = centralPeer.web;
+    // Where the peer is: its address, the web client, or several devices.
+    const auto place =
+        centralPeer.account && centralPeer.devices > 1
+            ? tr("%1 devices").arg(centralPeer.devices)
+        : web ? tr("Web")
+        : centralPeer.account && !centralPeer.deviceAddress.isEmpty()
+            ? centralPeer.deviceAddress
+            : address;
     QVariantMap endpoint;
     endpoint.insert(QStringLiteral("address"), address);
     endpoint.insert(QStringLiteral("port"), host.port);
@@ -876,12 +997,10 @@ void MainWindow::refreshHostList() {
                           ? centralPeerAway(address, host.nickname)
                           : lanPeerAway(address, host.nickname);
     item->setData(HostSubtitleRole,
-                  away ? QStringLiteral("%1 · %2").arg(web ? tr("Web") : address, tr("Away"))
-                       : (web ? tr("Web") : address));
+                  away ? QStringLiteral("%1 · %2").arg(place, tr("Away")) : place);
     item->setData(HostAwayRole, away);
     item->setData(Qt::UserRole, endpoint);
-    item->setToolTip(web ? tr("%1 (Web)").arg(host.nickname)
-                         : QStringLiteral("%1 (%2)").arg(host.nickname, address));
+    item->setToolTip(QStringLiteral("%1 (%2)").arg(host.nickname, place));
   }
   setHostListStatus({});
   if (auto *tab = qobject_cast<ChatTab *>(tabs_->currentWidget())) {

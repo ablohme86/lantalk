@@ -29,6 +29,8 @@ add_library(lantalk_central_lib STATIC
     protocol/peerdiscovery.h
     protocol/quotedmessage.cpp
     protocol/quotedmessage.h
+    central/accountstore.cpp
+    central/accountstore.h
     central/centrallink.cpp
     central/centrallink.h
     central/centralserver.cpp

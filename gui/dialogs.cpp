@@ -17,6 +17,7 @@
 #include <QSignalBlocker>
 #include <QLineEdit>
 #include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QSettings>
 #include <QSpinBox>
 
@@ -167,6 +168,91 @@ void TranslationDialog::setLanguages(const QString &myLanguage,
                                      const QString &peerLanguage) {
   myLanguage_->setCurrentText(myLanguage);
   peerLanguage_->setCurrentText(peerLanguage);
+}
+
+PinDialog::PinDialog(Mode mode, const QString &nickname,
+                     const QString &message, QWidget *parent)
+    : QDialog(parent), mode_(mode) {
+  setWindowTitle(mode == Mode::Enter ? tr("Enter your PIN") : tr("Personal PIN"));
+  auto *layout = new QFormLayout(this);
+  QString text = message;
+  if (text.isEmpty()) {
+    switch (mode) {
+    case Mode::Create:
+      text = tr("Protect %1 with a personal 4-digit PIN?\n\nWith the PIN, "
+                "in addition to the central host's password, you can use %1 "
+                "on several devices at once, such as LANTalk on your computer "
+                "and the web client on your phone. Everyone sees one %1, and "
+                "every device gets your conversations.\n\nNobody can sign in "
+                "as %1 without the PIN, and the central host keeps your "
+                "conversations so a new device can catch up.")
+                 .arg(nickname);
+      break;
+    case Mode::Enter:
+      text = tr("%1 is protected with a PIN. Enter it to use %1 on this "
+                "device too.")
+                 .arg(nickname);
+      break;
+    case Mode::Change:
+      text = tr("Choose a new PIN for %1. Your other devices need it the "
+                "next time they sign in.")
+                 .arg(nickname);
+      break;
+    }
+  }
+  auto *explanation = new QLabel(text, this);
+  explanation->setWordWrap(true);
+  explanation->setMinimumWidth(360);
+  layout->addRow(explanation);
+  const auto pinField = [this] {
+    auto *field = new QLineEdit(this);
+    field->setEchoMode(QLineEdit::Password);
+    field->setMaxLength(CentralProtocol::PinLength);
+    field->setInputMethodHints(Qt::ImhDigitsOnly);
+    field->setValidator(new QRegularExpressionValidator(
+        QRegularExpression(QStringLiteral("[0-9]{0,4}")), field));
+    field->setPlaceholderText(QStringLiteral("••••"));
+    connect(field, &QLineEdit::textChanged, this, &PinDialog::updateState);
+    return field;
+  };
+  pin_ = pinField();
+  layout->addRow(mode == Mode::Enter ? tr("PIN:") : tr("New PIN:"), pin_);
+  if (mode != Mode::Enter) {
+    confirmation_ = pinField();
+    layout->addRow(tr("Repeat PIN:"), confirmation_);
+    mismatch_ = new QLabel(tr("The PINs are not the same."), this);
+    mismatch_->setStyleSheet(QStringLiteral("color: #d9534f;"));
+    mismatch_->hide();
+    layout->addRow(mismatch_);
+  }
+  buttons_ = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+  if (mode == Mode::Create) {
+    buttons_->button(QDialogButtonBox::Ok)->setText(tr("Create PIN"));
+    buttons_->button(QDialogButtonBox::Cancel)->setText(tr("Not now"));
+  }
+  connect(buttons_, &QDialogButtonBox::accepted, this, &QDialog::accept);
+  connect(buttons_, &QDialogButtonBox::rejected, this, [this] {
+    declined_ = true;
+    reject();
+  });
+  layout->addRow(buttons_);
+  updateState();
+}
+
+QString PinDialog::pin() const { return pin_->text(); }
+
+bool PinDialog::declined() const { return declined_; }
+
+void PinDialog::updateState() {
+  const bool complete = CentralProtocol::isValidPin(pin_->text());
+  const bool confirmed =
+      !confirmation_ || confirmation_->text() == pin_->text();
+  if (mismatch_) {
+    mismatch_->setVisible(complete && confirmation_->text().size() ==
+                                          CentralProtocol::PinLength &&
+                          !confirmed);
+  }
+  buttons_->button(QDialogButtonBox::Ok)->setEnabled(complete && confirmed);
 }
 
 SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {

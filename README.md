@@ -196,6 +196,40 @@ each conversation: while a receiver has more than a few megabytes waiting,
 it stops reading from the sender, so a large file moves at the receiver's
 speed without piling up on the server.
 
+### Personal PIN and several devices
+
+The first time a nickname signs in to a central host, LANTalk (and the web
+client) offers to protect it with a personal 4-digit PIN. With the PIN, in
+addition to the central host's password, the same nickname can be signed in
+on several devices at once, for example LANTalk on a computer and the web
+client on a phone:
+
+- everyone else sees one person (the Hosts sidebar says how many devices);
+- a message to that person reaches every device, and what one device sends
+  goes to the other person once and shows up on the other devices as sent
+  by you; files and Live Translate follow along too;
+- nobody can sign in with the nickname without the PIN (older LANTalk
+  versions cannot use it at all), and five wrong PINs lock it for a minute,
+  longer after more;
+- `lantalkd` keeps the history of the nickname's conversations, so a device
+  that was off, or a new one, catches up when it signs in. LANTalk keeps its
+  own history as before.
+
+Skipping the offer ("Not now") keeps the nickname open as before, and
+LANTalk stops asking for that host. **Settings → Personal PIN...** (TUI:
+`/pin <PIN>`, web client: the lock button) sets one later or changes it.
+LANTalk saves a hash of the PIN, so it signs in by itself afterwards. Without
+TLS the PIN is only a guard against using someone else's nickname by
+mistake: someone who records the network traffic can work it out.
+
+`lantalkd` stores PINs (as hashes) and history in its data folder:
+`--data-dir <dir>`, by default `$STATE_DIRECTORY` (`/var/lib/lantalkd` under
+the systemd unit) or `~/.local/share/lantalkd`. A forgotten PIN is removed,
+with that nickname's history, by stopping the service and running
+`lantalkd --remove-pin <nickname>` (under systemd:
+`sudo lantalkd --data-dir /var/lib/lantalkd --remove-pin <nickname>`); `lantalkd --list-pins` lists the
+protected nicknames.
+
 ### Web client
 
 `lantalkd` also serves a web version of LANTalk for phones and other
@@ -281,11 +315,12 @@ sudo systemctl enable --now lantalkd
 `/etc/lantalk/lantalkd.conf`, readable only by root, which sets
 `LANTALK_CENTRAL_PASSWORD` and `LANTALKD_OPTIONS`. The unit runs the service
 as a throwaway user (`DynamicUser=yes`); follow its log with
-`journalctl -u lantalkd -f`.
+`journalctl -u lantalkd -f`. PINs and history live in
+`/var/lib/lantalkd` (`StateDirectory=lantalkd`).
 
 Without a password, anyone who can reach the port can sign in under any
 nickname and see who is online. The password only controls who signs in:
-everyone who knows it can still use any nickname. Conversations are not
+everyone who knows it can still use any nickname that has no PIN. Conversations are not
 encrypted and cross the network in clear text, just like LAN chat, and
 someone who records a sign-in can try to guess a weak password offline.
 Use a long password, and run the service on a trusted network or behind a
@@ -318,6 +353,27 @@ encoded. Clients send `CENTRAL_PING` every 30 seconds, and either side drops
 a connection that is silent for 90 seconds. A new sign-in with the same
 address and nickname replaces the old one, which receives
 `CENTRAL_REPLACED`.
+
+Version 2 adds personal PINs. Clients sign in with
+`CENTRAL_HELLO 2 <nickname> <port> <proof> <pinProof> <deviceId>`, where the
+PIN proof is the hex HMAC-SHA256 of `LANTALK_PIN <nonce>` keyed with the
+verifier, the hex SHA-256 of `LANTALK_PIN <pin>` (`-` without a PIN). Before
+the welcome the service says `CENTRAL_ACCOUNT ok <account id>`,
+`none` (the nickname may get a PIN with `CENTRAL_PIN_SET <verifier>`), or
+`unavailable`; a protected nickname without the right PIN gets
+`CENTRAL_PIN_REQUIRED missing|wrong|locked` before its rejection. An
+account's devices are one peer, marked with
+`CENTRAL_PEER_ACCOUNT <id> <devices>`, and every conversation with it
+reaches all of them, each on a channel of its own. A device asks for the
+history it lacks with `CENTRAL_SYNC <last seq>`, gets it as
+`CENTRAL_HISTORY <entry>` lines and `CENTRAL_SYNC_DONE <seq>`, and then joins
+the account's conversations. What one device sends reaches its other devices
+as `CENTRAL_MIRROR <channel> <line>`; `CENTRAL_SEQ <seq>` follows each stored
+message, and devices outside a conversation get it as `CENTRAL_HISTORY`. To
+serve several devices, `lantalkd` passes each party's `NICKNAME` and
+`CAPABILITIES` on once, combines their `PRESENCE`, and answers Live Translate
+requests itself where one party's devices disagree. A LANTalk 1.14 client
+that meets an older service signs in with version 1.
 
 ## Protocol extensions
 

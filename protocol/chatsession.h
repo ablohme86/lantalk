@@ -63,6 +63,9 @@ public:
   void setTypingTimeouts(int inactivityMs, int refreshMs, int expiryMs);
   QString peerName() const;
   bool peerIsWebClient() const;
+  // The peer's nickname is protected with a PIN on the central host, so it
+  // may answer from several devices.
+  bool peerHasAccount() const;
   // The peer nickname from the most recent handshake; unlike peerName(), it
   // survives disconnects and reconnect attempts.
   QString identityName() const;
@@ -78,6 +81,9 @@ public:
 signals:
   void peerIdentified(const QString &name);
   void messageReceived(const QString &message, const QString &originalMessage);
+  // Another device of this account sent `message` here (the translation, with
+  // what was typed as `originalMessage`).
+  void messageMirrored(const QString &message, const QString &originalMessage);
   // `id` names the transfer in fileTransferProgress().
   void fileSent(const QString &name, const QString &path,
                 const QString &mimeType, const QString &id);
@@ -90,6 +96,12 @@ signals:
   void fileTransferFailed(const QString &id, bool outgoing,
                           const QString &reason);
   void liveTranslationGranted();
+  // Another device of this account turned Live Translate on here, with these
+  // languages; liveTranslationGranted() follows.
+  void liveTranslationAdopted(const QString &myLanguage,
+                              const QString &peerLanguage);
+  // Another device of this account turned it off.
+  void liveTranslationStopped();
   void liveTranslationDenied(const QString &message);
   void peerLiveTranslationChanged(bool active, const QString &sourceLanguage,
                                   const QString &targetLanguage);
@@ -110,6 +122,10 @@ private:
   friend class ConnectionRegistry;
 
   void processLine(const QString &line);
+  void processMirroredLine(const QString &line);
+  // FILE_BEGIN, FILE_CHUNK, and FILE_END; a mirrored file is one this account
+  // sent. Returns whether the line was one of them.
+  bool processFileLine(const QStringList &parts, bool mirrored);
   QString fileTooLargeMessage() const;
   void sendLine(const QString &line);
   void startNextFile();
@@ -135,6 +151,7 @@ private:
     std::shared_ptr<QFile> file;
     qint64 received = 0;
     int percent = 0;
+    bool mirrored = false;
   };
   void discardIncomingFile(const QString &id, const QString &reason);
 
@@ -156,6 +173,10 @@ private:
   bool translationActive_ = false;
   bool peerTranslationActive_ = false;
   QString translationRequestId_;
+  // translationRequestId_ is another device's request, for these languages.
+  bool mirroredRequest_ = false;
+  QString mirroredSource_;
+  QString mirroredTarget_;
   QHash<QString, IncomingFile> incomingFiles_;
   QStringList receivedFilePaths_;
   QQueue<QString> outgoingFilePaths_;

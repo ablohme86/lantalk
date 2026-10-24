@@ -1,4 +1,5 @@
 #include "appconfig.h"
+#include "central/accountstore.h"
 #include "central/centralserver.h"
 #include "central/translationservice.h"
 #include "central/webserver.h"
@@ -9,6 +10,7 @@
 #include <QDateTime>
 #include <QFile>
 #include <QHostAddress>
+#include <QStandardPaths>
 
 #include <cstdio>
 
@@ -74,6 +76,20 @@ int main(int argc, char *argv[]) {
                      "LANTalk accepts; 0 relays no files).")
           .arg(MaximumFileSize / (1024 * 1024)),
       QStringLiteral("MB"), QString::number(MaximumFileSize / (1024 * 1024)));
+  const QCommandLineOption dataDirectoryOption(
+      QStringLiteral("data-dir"),
+      QStringLiteral("Keep personal PINs and the history of conversations in "
+                     "<dir> (default: $STATE_DIRECTORY, or %1).")
+          .arg(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)),
+      QStringLiteral("dir"));
+  const QCommandLineOption removePinOption(
+      QStringLiteral("remove-pin"),
+      QStringLiteral("Remove the PIN of <nickname>, and the history lantalkd "
+                     "kept for it, e.g. when the PIN is forgotten; then exit."),
+      QStringLiteral("nickname"));
+  const QCommandLineOption listPinsOption(
+      QStringLiteral("list-pins"),
+      QStringLiteral("List the nicknames protected with a PIN and exit."));
   parser.addOption(portOption);
   parser.addOption(listenOption);
   parser.addOption(passwordFileOption);
@@ -84,7 +100,44 @@ int main(int argc, char *argv[]) {
   parser.addOption(ollamaModelOption);
   parser.addOption(noOllamaDiscoveryOption);
   parser.addOption(maxFileSizeOption);
+  parser.addOption(dataDirectoryOption);
+  parser.addOption(removePinOption);
+  parser.addOption(listPinsOption);
   parser.process(application);
+
+  auto dataDirectory = parser.value(dataDirectoryOption);
+  if (dataDirectory.isEmpty()) dataDirectory = qEnvironmentVariable("STATE_DIRECTORY");
+  if (dataDirectory.isEmpty()) {
+    dataDirectory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  }
+  if (parser.isSet(removePinOption) || parser.isSet(listPinsOption)) {
+    AccountStore accounts;
+    QString error;
+    if (!accounts.open(dataDirectory, &error)) {
+      std::fprintf(stderr, "Cannot open %s: %s\n", qPrintable(dataDirectory),
+                   qPrintable(error));
+      return 1;
+    }
+    if (parser.isSet(listPinsOption)) {
+      for (const auto &name : accounts.names()) {
+        std::fprintf(stdout, "%s\n", qPrintable(name));
+      }
+      return 0;
+    }
+    const auto nickname = parser.value(removePinOption);
+    if (!accounts.find(nickname)) {
+      std::fprintf(stderr, "%s has no PIN.\n", qPrintable(nickname));
+      return 1;
+    }
+    if (!accounts.remove(nickname)) {
+      std::fprintf(stderr, "Cannot save %s.\n", qPrintable(dataDirectory));
+      return 1;
+    }
+    std::fprintf(stdout,
+                 "Removed the PIN of %s. Restart lantalkd if it is running.\n",
+                 qPrintable(nickname));
+    return 0;
+  }
 
   // Not a plain --password option: command lines are visible to every user.
   auto password = qEnvironmentVariable("LANTALK_CENTRAL_PASSWORD");
@@ -145,6 +198,8 @@ int main(int argc, char *argv[]) {
   CentralServer server;
   server.setPassword(password);
   server.setMaximumFileSize(qint64(maxFileSize * 1024 * 1024));
+  QString dataError;
+  const bool accountsAvailable = server.setDataDirectory(dataDirectory, &dataError);
   TranslationService translation;
   translation.setServer(parser.value(ollamaUrlOption),
                         parser.value(ollamaModelOption));
@@ -181,6 +236,12 @@ int main(int argc, char *argv[]) {
                  maxFileSize == 0
                      ? "File transfers are off"
                      : qPrintable(QStringLiteral("Files up to %1 MB").arg(maxFileSize)));
+  }
+  if (accountsAvailable) {
+    std::fprintf(stdout, "Personal PINs and history in %s\n",
+                 qPrintable(dataDirectory));
+  } else {
+    std::fprintf(stdout, "Personal PINs are off: %s\n", qPrintable(dataError));
   }
   if (translation.isConfigured()) {
     std::fprintf(stdout, "Live Translate with %s at %s\n",

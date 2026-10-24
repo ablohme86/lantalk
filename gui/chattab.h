@@ -53,6 +53,9 @@ public:
   // network mode (LAN or central host) changed.
   void restartConnection();
   void closeConversation();
+  // A message of this conversation another device of this account had, now
+  // in the history; shown unless the history is yet to be loaded.
+  bool showSyncedEntry(const ChatHistory::Entry &entry);
 
 signals:
   void titleChanged();

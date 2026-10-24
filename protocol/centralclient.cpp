@@ -7,6 +7,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocale>
+#include <QSettings>
 #include <QUuid>
 
 #include <utility>
@@ -90,6 +91,7 @@ void CentralClient::start(const QString &hostSpec, const QString &nickname,
     return;
   }
   stop();
+  legacySignIn_ = false;
   hostSpec_ = spec;
   nickname_ = nickname;
   listenPort_ = listenPort;
@@ -117,6 +119,12 @@ void CentralClient::stop() {
   buffer_.clear();
   ready_ = false;
   clientId_.clear();
+  accountPeers_.clear();
+  pendingVerifier_.clear();
+  if (accountState_ != AccountState::Unknown) {
+    accountState_ = AccountState::Unknown;
+    emit accountStateChanged();
+  }
   failAllChannels(QStringLiteral("LANTalk left the central host."));
   for (const auto &id : translations_.keys()) {
     finishTranslation(id, false, QStringLiteral("LANTalk left the central host."));
@@ -146,6 +154,104 @@ void CentralClient::setAway(bool away) {
   away_ = away;
   if (ready_) sendLine(away ? QStringLiteral("CENTRAL_STATUS away")
                             : QStringLiteral("CENTRAL_STATUS active"));
+}
+
+CentralClient::AccountState CentralClient::accountState() const {
+  return accountState_;
+}
+
+QString CentralClient::pinKey() const {
+  return QStringLiteral("central/pins/%1")
+      .arg(ConversationIdentity::digest(hostSpec_, nickname_));
+}
+
+bool CentralClient::hasSavedPin() const {
+  return isActive() && !QSettings().value(pinKey()).toString().isEmpty();
+}
+
+bool CentralClient::setPin(const QString &pin) {
+  if (!ready_ || !CentralProtocol::isValidPin(pin) ||
+      (accountState_ != AccountState::Unprotected &&
+       accountState_ != AccountState::Protected)) {
+    return false;
+  }
+  pendingVerifier_ = CentralProtocol::pinVerifier(pin);
+  sendLine(QStringLiteral("CENTRAL_PIN_SET %1")
+               .arg(QString::fromLatin1(pendingVerifier_)));
+  return true;
+}
+
+void CentralClient::signInWithPin(const QString &pin) {
+  if (!isActive() || !CentralProtocol::isValidPin(pin)) return;
+  QSettings().setValue(pinKey(),
+                       QString::fromLatin1(CentralProtocol::pinVerifier(pin)));
+  replaced_ = false;
+  lastError_.clear();
+  reconnectTimer_.stop();
+  connectToService();
+  emit stateChanged();
+}
+
+QString CentralClient::deviceId() const {
+  if (!deviceId_.isEmpty()) return deviceId_;
+  QSettings settings;
+  auto id = settings.value(QStringLiteral("central/deviceId")).toString();
+  if (!CentralProtocol::isValidChannelId(id)) {
+    id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    settings.setValue(QStringLiteral("central/deviceId"), id);
+  }
+  return id;
+}
+
+void CentralClient::setDeviceId(const QString &id) { deviceId_ = id; }
+
+QString CentralClient::accountAddress() const {
+  return CentralProtocol::formatAddress(socket_.peerAddress());
+}
+
+void CentralClient::applyAccount(Peer &peer) {
+  const auto devices = accountPeers_.constFind(peer.id);
+  if (devices == accountPeers_.cend()) return;
+  peer.account = true;
+  peer.devices = *devices;
+  const auto address = accountAddress();
+  if (address.isEmpty() || peer.address == address) return;
+  peer.deviceAddress = peer.address;
+  // The conversation so far was with the device's address.
+  ChatHistory::adopt(peer.deviceAddress, address, peer.nickname);
+  peer.address = address;
+}
+
+void CentralClient::noteSequence(qint64 sequence) {
+  if (accountId_.isEmpty() || sequence <= syncedThrough_) return;
+  syncedThrough_ = sequence;
+  QSettings().setValue(QStringLiteral("central/synced/%1").arg(accountId_),
+                       syncedThrough_);
+}
+
+void CentralClient::addHistoryEntry(const QByteArray &encoded) {
+  const auto entry = QJsonDocument::fromJson(QByteArray::fromBase64(
+                                                 encoded, QByteArray::Base64UrlEncoding))
+                         .object();
+  const auto sequence = entry.value(QStringLiteral("seq")).toInteger();
+  const auto nickname = entry.value(QStringLiteral("peer")).toString();
+  const auto message = entry.value(QStringLiteral("message")).toString();
+  if (sequence <= syncedThrough_ || nickname.isEmpty() || message.isEmpty()) {
+    return;
+  }
+  const auto address = entry.value(QStringLiteral("account")).toBool()
+                           ? accountAddress()
+                           : entry.value(QStringLiteral("address")).toString();
+  const ChatHistory::Entry stored{
+      entry.value(QStringLiteral("out")).toBool() ? QStringLiteral("You") : nickname,
+      message,
+      QDateTime::fromString(entry.value(QStringLiteral("time")).toString(),
+                            Qt::ISODateWithMs),
+      entry.value(QStringLiteral("alternate")).toString()};
+  ChatHistory::append(address, nickname, stored.sender, stored.message,
+                      stored.timestamp, stored.alternate);
+  noteSequence(sequence);
+  emit historyEntryAdded(address, nickname, stored);
 }
 
 void CentralClient::translate(const QString &message,
@@ -262,6 +368,12 @@ void CentralClient::handleDisconnected(const QString &reason) {
   ready_ = false;
   clientId_.clear();
   buffer_.clear();
+  accountPeers_.clear();
+  pendingVerifier_.clear();
+  if (accountState_ != AccountState::Unknown) {
+    accountState_ = AccountState::Unknown;
+    emit accountStateChanged();
+  }
   failAllChannels(reason);
   for (const auto &id : translations_.keys()) finishTranslation(id, false, reason);
   setCanTranslate(false);
@@ -271,8 +383,18 @@ void CentralClient::handleDisconnected(const QString &reason) {
   } else if (wasReady) {
     emit peersChanged();
   }
-  if (!replaced_) lastError_ = reason;
-  if (isActive() && !replaced_) reconnectTimer_.start();
+  if (!replaced_ && !reconnectSoon_) lastError_ = reason;
+  if (isActive() && !replaced_) {
+    if (std::exchange(reconnectSoon_, false)) {
+      QTimer::singleShot(0, this, [this] {
+        if (isActive() && socket_.state() == QAbstractSocket::UnconnectedState) {
+          connectToService();
+        }
+      });
+    } else {
+      reconnectTimer_.start();
+    }
+  }
   emit stateChanged();
 }
 
@@ -303,15 +425,34 @@ void CentralClient::processLine(const QString &line) {
     if (channel) channel->receivedLine(line.section(u' ', 2));
     return;
   }
+  if (command == QStringLiteral("CENTRAL_MIRROR")) {
+    const auto channel = channels_.value(line.section(u' ', 1, 1));
+    if (channel) channel->receivedMirror(line.section(u' ', 2));
+    return;
+  }
   const auto parts = line.split(u' ', Qt::SkipEmptyParts);
   if (command == QStringLiteral("CENTRAL_CHALLENGE") && parts.size() == 2 &&
       clientId_.isEmpty()) {
-    sendLine(QStringLiteral("CENTRAL_HELLO %1 %2 %3 %4")
-                 .arg(CentralProtocol::Version)
-                 .arg(QString::fromLatin1(CentralProtocol::encodeField(nickname_)))
-                 .arg(listenPort_)
-                 .arg(QString::fromLatin1(CentralProtocol::authProof(
-                     password_, parts.at(1).toLatin1()))));
+    // An older lantalkd rejects the sign-in it cannot read; LANTalk then
+    // signs in the old way.
+    const auto proof = QString::fromLatin1(
+        CentralProtocol::authProof(password_, parts.at(1).toLatin1()));
+    if (legacySignIn_) {
+      sendLine(QStringLiteral("CENTRAL_HELLO 1 %1 %2 %3")
+                   .arg(QString::fromLatin1(CentralProtocol::encodeField(nickname_)))
+                   .arg(listenPort_)
+                   .arg(proof));
+    } else {
+      const auto verifier = QSettings().value(pinKey()).toString().toLatin1();
+      sendLine(QStringLiteral("CENTRAL_HELLO %1 %2 %3 %4 %5 %6")
+                   .arg(CentralProtocol::Version)
+                   .arg(QString::fromLatin1(CentralProtocol::encodeField(nickname_)))
+                   .arg(listenPort_)
+                   .arg(proof,
+                        QString::fromLatin1(CentralProtocol::pinProof(
+                            verifier, parts.at(1).toLatin1())),
+                        deviceId()));
+    }
     pingTimer_.start();
     return;
   }
@@ -320,6 +461,7 @@ void CentralClient::processLine(const QString &line) {
     Peer peer{parts.at(1), CentralProtocol::decodeField(parts.at(2)),
               parts.at(3), parts.at(4).toUShort(&portIsValid)};
     if (peer.nickname.isEmpty() || peer.id == clientId_) return;
+    applyAccount(peer);
     for (int index = 0; index < peers_.size(); ++index) {
       if (peers_.at(index).id == peer.id) {
         peers_.removeAt(index);
@@ -328,6 +470,64 @@ void CentralClient::processLine(const QString &line) {
     }
     peers_.append(peer);
     if (ready_) emit peersChanged();
+    return;
+  }
+  if (command == QStringLiteral("CENTRAL_PEER_ACCOUNT") && parts.size() == 3) {
+    accountPeers_.insert(parts.at(1), qMax(1, parts.at(2).toInt()));
+    for (auto &peer : peers_) {
+      if (peer.id != parts.at(1)) continue;
+      applyAccount(peer);
+      if (ready_) emit peersChanged();
+      break;
+    }
+    return;
+  }
+  if (command == QStringLiteral("CENTRAL_ACCOUNT") && parts.size() >= 2) {
+    const auto previous = accountState_;
+    if (parts.at(1) == QStringLiteral("ok") && parts.size() == 3) {
+      accountState_ = AccountState::Protected;
+      accountId_ = parts.at(2);
+      if (!pendingVerifier_.isEmpty()) {
+        QSettings().setValue(pinKey(), QString::fromLatin1(pendingVerifier_));
+        pendingVerifier_.clear();
+      }
+      syncedThrough_ =
+          QSettings()
+              .value(QStringLiteral("central/synced/%1").arg(accountId_), 0)
+              .toLongLong();
+      // Before any conversation opens, so the history stays in order.
+      sendLine(QStringLiteral("CENTRAL_SYNC %1").arg(syncedThrough_));
+    } else if (parts.at(1) == QStringLiteral("none")) {
+      accountState_ = AccountState::Unprotected;
+    } else if (parts.at(1) == QStringLiteral("unavailable")) {
+      accountState_ = AccountState::Unavailable;
+      pendingVerifier_.clear();
+    }
+    if (accountState_ != previous) emit accountStateChanged();
+    return;
+  }
+  if (command == QStringLiteral("CENTRAL_PIN_CHANGED")) {
+    if (!pendingVerifier_.isEmpty()) {
+      QSettings().setValue(pinKey(), QString::fromLatin1(pendingVerifier_));
+      pendingVerifier_.clear();
+    }
+    emit pinChanged();
+    return;
+  }
+  if (command == QStringLiteral("CENTRAL_PIN_REQUIRED") && parts.size() == 2) {
+    // CENTRAL_REJECT follows and stops reconnecting.
+    if (parts.at(1) != QStringLiteral("locked")) QSettings().remove(pinKey());
+    pinRequired_ = parts.at(1);
+    return;
+  }
+  if (command == QStringLiteral("CENTRAL_HISTORY") && parts.size() == 2) {
+    addHistoryEntry(parts.at(1).toLatin1());
+    return;
+  }
+  if ((command == QStringLiteral("CENTRAL_SEQ") ||
+       command == QStringLiteral("CENTRAL_SYNC_DONE")) &&
+      parts.size() == 2) {
+    noteSequence(parts.at(1).toLongLong());
     return;
   }
   if (command == QStringLiteral("CENTRAL_OLLAMA") && parts.size() == 2) {
@@ -388,6 +588,7 @@ void CentralClient::processLine(const QString &line) {
     return;
   }
   if (command == QStringLiteral("CENTRAL_PEER_GONE") && parts.size() == 2) {
+    accountPeers_.remove(parts.at(1));
     for (int index = 0; index < peers_.size(); ++index) {
       if (peers_.at(index).id == parts.at(1)) {
         peers_.removeAt(index);
@@ -401,6 +602,11 @@ void CentralClient::processLine(const QString &line) {
     // The peer list precedes the welcome, so it is complete now.
     clientId_ = parts.at(1);
     ready_ = true;
+    if (accountState_ == AccountState::Unknown) {
+      // A lantalkd without accounts says nothing about them.
+      accountState_ = AccountState::Unavailable;
+      emit accountStateChanged();
+    }
     // The service takes everyone for active until told otherwise.
     if (away_) sendLine(QStringLiteral("CENTRAL_STATUS away"));
     lastError_.clear();
@@ -453,10 +659,23 @@ void CentralClient::processLine(const QString &line) {
     return;
   }
   if (command == QStringLiteral("CENTRAL_REJECT")) {
+    const auto reason = parts.size() >= 2 ? CentralProtocol::decodeField(parts.at(1))
+                                          : QString();
+    if (!legacySignIn_ && clientId_.isEmpty() &&
+        reason == QStringLiteral("The central host could not read the sign-in.")) {
+      // lantalkd from before PINs; the next attempt signs in the old way.
+      legacySignIn_ = true;
+      reconnectSoon_ = true;
+      return;
+    }
     replaced_ = true;
-    lastError_ = parts.size() >= 2
-                     ? CentralProtocol::decodeField(parts.at(1))
-                     : QStringLiteral("The central host refused the connection.");
+    lastError_ = reason.isEmpty()
+                     ? QStringLiteral("The central host refused the connection.")
+                     : reason;
+    if (!pinRequired_.isEmpty()) {
+      const auto pinReason = std::exchange(pinRequired_, {});
+      QTimer::singleShot(0, this, [this, pinReason] { emit pinRequired(pinReason); });
+    }
     return;
   }
   // CENTRAL_PONG and unknown commands only keep the connection alive.
@@ -508,6 +727,13 @@ RelayTransport::RelayTransport(CentralClient *client, QObject *parent)
                    .arg(reason));
   });
   if (client_) {
+    // The peer may become an account, or change its kind, while connected.
+    connect(client_, &CentralClient::peersChanged, this, [this] {
+      if (peer_.id.isEmpty()) return;
+      for (const auto &peer : client_->peers_) {
+        if (peer.id == peer_.id) peer_ = peer;
+      }
+    });
     connect(client_, &CentralClient::stateChanged, this, [this] {
       if (state_ == State::Connecting && channelId_.isEmpty() &&
           readyTimeout_.isActive() && client_->isReady()) {
@@ -578,6 +804,10 @@ void RelayTransport::receivedLine(const QString &line) {
   if (state_ != State::Connected) return;
   readBuffer_.append(line.toUtf8() + '\n');
   emit readyRead();
+}
+
+void RelayTransport::receivedMirror(const QString &line) {
+  if (state_ == State::Connected) emit mirrored(line);
 }
 
 void RelayTransport::closedByService(const QString &reason) {
@@ -657,6 +887,8 @@ QString RelayTransport::connectionKey(bool) const { return channelId_; }
 QString RelayTransport::peerNickname() const { return peer_.nickname; }
 
 bool RelayTransport::peerIsWebClient() const { return peer_.web; }
+
+bool RelayTransport::peerHasAccount() const { return peer_.account; }
 
 qint64 RelayTransport::maximumFileSize() const {
   return client_ ? client_->maximumFileSize() : -1;

@@ -33,6 +33,11 @@
                autocomplete="current-password" enterkeyhint="go">
         <small data-t="passwordHint">Leave empty if the server has no password.</small>
       </label>
+      <label id="login-pin-field" class="field" hidden>
+        <span data-t="pin">PIN</span>
+        <input id="login-pin" type="password" inputmode="numeric" pattern="[0-9]{4}"
+               maxlength="4" autocomplete="one-time-code" enterkeyhint="go">
+      </label>
       <label class="check">
         <input id="login-remember" type="checkbox" checked>
         <span data-t="remember">Remember me on this device</span>
@@ -53,6 +58,9 @@
           <h1 id="people-title">LANTalk</h1>
           <span id="me" class="subtle"></span>
         </div>
+        <button id="pin-button" class="icon-button" type="button" data-t-title="pinTitle" title="Personal PIN" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>
+        </button>
         <button id="sign-out" class="icon-button" type="button" data-t-title="signOut" title="Sign out">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 16l4-4-4-4M19 12H9"/></svg>
         </button>
@@ -138,6 +146,28 @@
       <div class="row actions">
         <button id="translate-cancel" class="secondary" type="button" data-t="cancel">Cancel</button>
         <button id="translate-start" class="primary" type="submit" data-t="start">Start</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="pin-sheet" class="sheet" hidden>
+    <form id="pin-form" class="sheet-card" novalidate>
+      <h2 data-t="pinTitle">Personal PIN</h2>
+      <p id="pin-text" class="subtle"></p>
+      <label class="field">
+        <span data-t="newPin">New PIN</span>
+        <input id="pin-new" type="password" inputmode="numeric" maxlength="4"
+               autocomplete="new-password">
+      </label>
+      <label class="field">
+        <span data-t="repeatPin">Repeat PIN</span>
+        <input id="pin-repeat" type="password" inputmode="numeric" maxlength="4"
+               autocomplete="new-password" enterkeyhint="done">
+      </label>
+      <p id="pin-error" class="error" role="alert" hidden></p>
+      <div class="row actions">
+        <button id="pin-later" class="secondary" type="button" data-t="notNow">Not now</button>
+        <button id="pin-save" class="primary" type="submit" data-t="createPin">Create PIN</button>
       </div>
     </form>
   </div>

@@ -149,3 +149,14 @@ void ChatHistory::replace(const QString &address, const QString &peerName,
     return;
   }
 }
+
+void ChatHistory::adopt(const QString &fromAddress, const QString &toAddress,
+                        const QString &peerName) {
+  if (ConversationIdentity::sameAddress(fromAddress, toAddress)) return;
+  const auto from = preparedPath(fromAddress, peerName);
+  const auto to = preparedPath(toAddress, peerName);
+  if (from.isEmpty() || to.isEmpty() || !QFile::exists(from)) return;
+  auto entries = readEntries(from);
+  entries.append(readEntries(to));
+  if (writeEntries(to, entries)) QFile::remove(from);
+}

@@ -166,6 +166,43 @@ const TEXTS = {
                    "无法翻译消息：%1", "無法翻譯訊息：%1"],
   sentTranslation: ["Sent translation", "Sendt oversettelse", "已发送的译文", "已傳送的譯文"],
   hideTranslation: ["Hide translation", "Skjul oversettelse", "隐藏译文", "隱藏譯文"],
+  pin: ["PIN", "PIN-kode", "PIN 码", "PIN 碼"],
+  pinTitle: ["Personal PIN", "Personlig PIN-kode", "个人 PIN 码", "個人 PIN 碼"],
+  pinOffer: ["Protect %1 with a personal 4-digit PIN? With the PIN, in addition to the server's password, you can use %1 on several devices at once, such as here and in LANTalk on your computer. Everyone sees one %1, every device gets your conversations, and the server keeps them so a new device can catch up.",
+             "Vil du beskytte %1 med en personlig firesifret PIN-kode? Med PIN-koden, i tillegg til serverens passord, kan du bruke %1 på flere enheter samtidig, for eksempel her og i LANTalk på datamaskinen. Alle ser én %1, alle enhetene dine får samtalene, og serveren tar vare på dem slik at en ny enhet kan ta igjen det den gikk glipp av.",
+             "要用个人 4 位数 PIN 码保护 %1 吗？有了 PIN 码，再加上服务器密码，您就可以同时在多台设备上使用 %1，例如这里和电脑上的 LANTalk。大家看到的是同一个 %1，每台设备都会收到您的对话，服务器也会保存对话，新设备可以补上之前的内容。",
+             "要用個人 4 位數 PIN 碼保護 %1 嗎？有了 PIN 碼，再加上伺服器密碼，您就可以同時在多台裝置上使用 %1，例如這裡和電腦上的 LANTalk。大家看到的是同一個 %1，每台裝置都會收到您的對話，伺服器也會保存對話，新裝置可以補上先前的內容。"],
+  pinChangeText: ["Choose a new PIN for %1. Your other devices need it the next time they sign in.",
+                  "Velg en ny PIN-kode for %1. De andre enhetene dine trenger den neste gang de logger inn.",
+                  "为 %1 选择新的 PIN 码。您的其他设备下次登录时需要使用它。",
+                  "為 %1 選擇新的 PIN 碼。您的其他裝置下次登入時需要使用它。"],
+  pinMissing: ["%1 is protected with a PIN. Enter it to use %1 here too.",
+               "%1 er beskyttet med en PIN-kode. Skriv den inn for å bruke %1 her også.",
+               "%1 受 PIN 码保护。输入 PIN 码即可在这里使用 %1。",
+               "%1 受 PIN 碼保護。輸入 PIN 碼即可在這裡使用 %1。"],
+  pinWrong: ["Wrong PIN. Try again.", "Feil PIN-kode. Prøv igjen.", "PIN 码错误。请重试。", "PIN 碼錯誤。請再試一次。"],
+  pinLocked: ["Too many wrong PINs. Wait a few minutes and try again.",
+              "For mange feil PIN-koder. Vent noen minutter og prøv igjen.",
+              "错误 PIN 码次数过多。请等待几分钟后重试。", "錯誤 PIN 碼次數過多。請等待幾分鐘後再試。"],
+  newPin: ["New PIN", "Ny PIN-kode", "新 PIN 码", "新 PIN 碼"],
+  repeatPin: ["Repeat PIN", "Gjenta PIN-koden", "再次输入 PIN 码", "再次輸入 PIN 碼"],
+  pinFourDigits: ["A PIN is 4 digits.", "En PIN-kode er fire sifre.", "PIN 码为 4 位数字。", "PIN 碼為 4 位數字。"],
+  pinMismatch: ["The PINs are not the same.", "PIN-kodene er ikke like.", "两次输入的 PIN 码不一致。", "兩次輸入的 PIN 碼不一致。"],
+  createPin: ["Create PIN", "Lag PIN-kode", "创建 PIN 码", "建立 PIN 碼"],
+  savePin: ["Save", "Lagre", "保存", "儲存"],
+  notNow: ["Not now", "Ikke nå", "以后再说", "以後再說"],
+  pinSaved: ["Your nickname is protected. Sign in with the PIN on your other devices.",
+             "Kallenavnet ditt er beskyttet. Logg inn med PIN-koden på de andre enhetene dine.",
+             "您的昵称已受保护。请在其他设备上使用 PIN 码登录。",
+             "您的暱稱已受保護。請在其他裝置上使用 PIN 碼登入。"],
+  pinChanged: ["PIN changed. Use the new PIN on your other devices.",
+               "PIN-koden er endret. Bruk den nye PIN-koden på de andre enhetene dine.",
+               "PIN 码已更改。请在其他设备上使用新的 PIN 码。",
+               "PIN 碼已變更。請在其他裝置上使用新的 PIN 碼。"],
+  devices: ["%1 devices", "%1 enheter", "%1 台设备", "%1 台裝置"],
+  translateOffElsewhere: ["Live Translate was turned off on another device.",
+                          "Direkteoversettelse ble slått av på en annen enhet.",
+                          "实时翻译已在另一台设备上关闭。", "即時翻譯已在另一台裝置上關閉。"],
   replaced: ["You signed in with this nickname somewhere else.",
              "Du logget inn med dette kallenavnet et annet sted.",
              "你已在其他地方使用此昵称登录。", "你已在其他地方使用此暱稱登入。"],
@@ -201,7 +238,7 @@ let language = storage.get("lantalk.language") || detectLanguage();
 function t(key, ...args) {
   const row = TEXTS[key];
   let text = row ? row[languageIndex(language)] : key;
-  args.forEach((arg, index) => { text = text.replace(`%${index + 1}`, arg); });
+  args.forEach((arg, index) => { text = text.split(`%${index + 1}`).join(arg); });
   return text;
 }
 
@@ -316,9 +353,21 @@ const uuid = () => (crypto.randomUUID ? crypto.randomUUID() :
   "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
     (c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (c / 4)))).toString(16)));
 
+// CentralProtocol::pinVerifier: what the server keeps for a PIN.
+const pinVerifier = pin => Array.from(sha256(encoder.encode("LANTALK_PIN " + pin)),
+                                      b => b.toString(16).padStart(2, "0")).join("");
+const pinProof = (verifier, nonce) =>
+  verifier ? hmacSha256Hex(verifier, encoder.encode("LANTALK_PIN " + nonce)) : "-";
+const isPin = pin => /^[0-9]{4}$/.test(pin);
+
 // ConversationIdentity: the same address and nickname is the same person.
 const normalizeNickname = name => name.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
 const conversationKey = (address, nickname) => `${address}|${normalizeNickname(nickname)}`;
+// A nickname with a PIN may answer from any device, so its conversation is
+// not tied to one address.
+const ACCOUNT_ADDRESS = "lantalkd";
+const peerKey = peer =>
+  conversationKey(peer.account ? ACCOUNT_ADDRESS : peer.address, peer.nickname);
 
 // -------------------------------------------------------------- state --
 
@@ -368,6 +417,13 @@ const state = {
   away: false,
   lastActivity: Date.now(),
   translations: new Map(),  // request id -> {resolve, reject, timer}
+  account: "unknown",       // CENTRAL_ACCOUNT: none, ok, or unavailable
+  accountId: "",
+  synced: 0,                // the account's last history entry here
+  syncing: false,
+  pendingVerifier: "",      // sent with CENTRAL_PIN_SET
+  pinRequired: "",          // CENTRAL_PIN_REQUIRED before a rejection
+  pinOffered: false,
 };
 
 const $ = id => document.getElementById(id);
@@ -458,13 +514,80 @@ function handleCentral(line) {
   }
   switch (command) {
     case "CENTRAL_CHALLENGE":
-      sendCentral(`CENTRAL_HELLO 1 ${encodeField(state.nickname)} ${CHAT_PORT} ` +
-                  authProof(state.password, parts[1]));
+      state.account = "unknown";
+      sendCentral(`CENTRAL_HELLO 2 ${encodeField(state.nickname)} ${CHAT_PORT} ` +
+                  `${authProof(state.password, parts[1])} ` +
+                  `${pinProof(storage.get(pinKey()) || "", parts[1])} ${deviceId()}`);
+      break;
+    case "CENTRAL_PIN_REQUIRED":
+      state.pinRequired = parts[1] || "missing";
+      if (state.pinRequired !== "locked") storage.set(pinKey(), null);
       break;
     case "CENTRAL_REJECT": {
       const reason = decodeField(parts[1] || "");
+      const pin = state.pinRequired;
+      state.pinRequired = "";
+      if (pin) {
+        // The password was right; the PIN is what is missing.
+        failSignIn(pin === "wrong" ? t("pinWrong") : pin === "locked" ? t("pinLocked")
+                     : t("pinMissing", state.nickname), false, true);
+        break;
+      }
       failSignIn(/requires a password/.test(reason) ? t("needsPassword") :
                  /Wrong password/.test(reason) ? t("wrongPassword") : reason, true);
+      break;
+    }
+    case "CENTRAL_ACCOUNT":
+      if (parts[1] === "ok" && parts[2]) {
+        state.account = "ok";
+        state.accountId = parts[2];
+        if (state.pendingVerifier) {
+          storage.set(pinKey(), state.pendingVerifier);
+          state.pendingVerifier = "";
+          showNotice(t("pinSaved"));
+        }
+        state.synced = Number(storage.get(`lantalk.synced.${state.accountId}`)) || 0;
+        // Before any conversation opens, so the history stays in order.
+        state.syncing = true;
+        sendCentral(`CENTRAL_SYNC ${state.synced}`);
+      } else if (parts[1] === "none" || parts[1] === "unavailable") {
+        state.account = parts[1];
+        state.pendingVerifier = "";
+      }
+      renderPinButton();
+      if (state.ready) offerPin();
+      break;
+    case "CENTRAL_PIN_CHANGED":
+      if (state.pendingVerifier) storage.set(pinKey(), state.pendingVerifier);
+      state.pendingVerifier = "";
+      showNotice(t("pinChanged"));
+      break;
+    case "CENTRAL_HISTORY":
+      addHistoryEntry(parts[1] || "");
+      break;
+    case "CENTRAL_SEQ":
+      noteSequence(Number(parts[1]));
+      break;
+    case "CENTRAL_SYNC_DONE":
+      noteSequence(Number(parts[1]));
+      state.syncing = false;
+      saveHistory();
+      if (state.ready) { renderPeople(); renderChat(); }
+      break;
+    case "CENTRAL_MIRROR": {
+      const channel = state.channels.get(parts[1]);
+      if (channel) handleMirror(channel, line.slice(command.length + parts[1].length + 2));
+      break;
+    }
+    case "CENTRAL_PEER_ACCOUNT": {
+      const peer = state.peers.get(parts[1]);
+      if (peer) {
+        const before = peerKey(peer);
+        peer.account = true;
+        peer.devices = Math.max(1, Number(parts[2]) || 1);
+        if (before !== peerKey(peer)) adoptConversation(before, peerKey(peer));
+        peerArrived(peer);
+      }
       break;
     }
     case "CENTRAL_REPLACED":
@@ -475,14 +598,10 @@ function handleCentral(line) {
         const peer = { id: parts[1], nickname: decodeField(parts[2]),
                        address: parts[3], port: Number(parts[4]) };
         if (peer.nickname && peer.id !== state.myId) {
+          const known = state.peers.get(peer.id);
+          if (known) Object.assign(peer, { account: known.account, devices: known.devices });
           state.peers.set(peer.id, peer);
-          // Messages written while they were away go out now, and an open
-          // conversation picks up again.
-          const conversation = conversationFor(peer, false);
-          if (conversation && (conversation.queue.length || state.current === conversation.key)) {
-            ensureChannel(conversation);
-          }
-          if (state.ready) { renderPeople(); renderChatHeader(); }
+          peerArrived(peer);
         }
       }
       break;
@@ -591,16 +710,140 @@ function handleCentral(line) {
   }
 }
 
+// Messages written while they were away go out now, and an open
+// conversation picks up again.
+function peerArrived(peer) {
+  const conversation = conversationFor(peer, false);
+  if (conversation && (conversation.queue.length || state.current === conversation.key)) {
+    ensureChannel(conversation);
+  }
+  if (state.ready) { renderPeople(); renderChatHeader(); }
+}
+
+// The conversation so far was with one address; it continues under the key
+// of the nickname's account.
+function adoptConversation(from, to) {
+  const old = state.conversations.get(from);
+  if (!old) return;
+  state.conversations.delete(from);
+  const existing = state.conversations.get(to);
+  if (existing) {
+    existing.messages = old.messages.concat(existing.messages);
+    existing.queue = old.queue.concat(existing.queue);
+  } else {
+    old.key = to;
+    old.address = ACCOUNT_ADDRESS;
+    state.conversations.set(to, old);
+  }
+  for (const channel of state.channels.values()) if (channel.key === from) channel.key = to;
+  if (state.current === from) state.current = to;
+  saveHistory();
+}
+
+// ------------------------------------------------------- personal PIN --
+
+const pinKey = () => `lantalk.pin.${normalizeNickname(state.nickname)}`;
+const pinDeclinedKey = () => `lantalk.pinDeclined.${normalizeNickname(state.nickname)}`;
+
+function deviceId() {
+  let id = storage.get("lantalk.device");
+  if (!id || !/^[A-Za-z0-9-]{1,64}$/.test(id)) {
+    id = uuid();
+    storage.set("lantalk.device", id);
+  }
+  return id;
+}
+
+function noteSequence(sequence) {
+  if (!state.accountId || !Number.isSafeInteger(sequence) || sequence <= state.synced) return;
+  state.synced = sequence;
+  storage.set(`lantalk.synced.${state.accountId}`, String(sequence));
+}
+
+// A message of the account's another device had, or one sent while this
+// device was away.
+function addHistoryEntry(encoded) {
+  let entry;
+  try { entry = JSON.parse(decodeField(encoded)); } catch { return; }
+  if (!entry || !entry.peer || !entry.message || !(entry.seq > state.synced)) return;
+  noteSequence(entry.seq);
+  const address = entry.account ? ACCOUNT_ADDRESS : String(entry.address || "");
+  const key = conversationKey(address, entry.peer);
+  const conversation = state.conversations.get(key) || newConversation(key, entry.peer, address);
+  const time = Date.parse(entry.time) || Date.now();
+  const message = entry.out
+    ? { out: true, text: entry.message, translation: entry.alternate || undefined, time }
+    : { out: false, text: entry.message, original: entry.alternate || undefined, time };
+  if (state.syncing) {
+    // In order among what this device already has.
+    let index = conversation.messages.length;
+    while (index > 0 && (conversation.messages[index - 1].time || 0) > time) --index;
+    conversation.messages.splice(index, 0, message);
+    conversation.lastActivity = Math.max(conversation.lastActivity, time);
+    return;
+  }
+  addMessage(conversation, message);
+}
+
+function renderPinButton() {
+  $("pin-button").hidden = !(state.account === "none" || state.account === "ok");
+}
+
+// Once per sign-in, until "Not now".
+function offerPin() {
+  if (state.account !== "none" || state.pinOffered || storage.get(pinDeclinedKey())) return;
+  state.pinOffered = true;
+  openPinSheet();
+}
+
+function openPinSheet() {
+  const changing = state.account === "ok";
+  $("pin-text").textContent = changing ? t("pinChangeText", state.nickname)
+                                       : t("pinOffer", state.nickname);
+  $("pin-save").textContent = changing ? t("savePin") : t("createPin");
+  $("pin-later").textContent = changing ? t("cancel") : t("notNow");
+  $("pin-new").value = "";
+  $("pin-repeat").value = "";
+  $("pin-error").hidden = true;
+  $("pin-sheet").hidden = false;
+  $("pin-new").focus();
+}
+
+function closePinSheet(declined) {
+  $("pin-sheet").hidden = true;
+  if (declined && state.account === "none") storage.set(pinDeclinedKey(), "1");
+}
+
+function submitPin() {
+  const pin = $("pin-new").value;
+  const error = !isPin(pin) ? t("pinFourDigits")
+    : pin !== $("pin-repeat").value ? t("pinMismatch") : "";
+  $("pin-error").textContent = error;
+  $("pin-error").hidden = !error;
+  if (error) return;
+  state.pendingVerifier = pinVerifier(pin);
+  sendCentral(`CENTRAL_PIN_SET ${state.pendingVerifier}`);
+  closePinSheet(false);
+}
+
+let noticeTimer = 0;
+function showNotice(text) {
+  showBanner(text);
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { if (state.ready) showBanner(""); }, 6000);
+}
+
 // escapeProtocolField: one line, single spaces.
 const protocolNickname = () => state.nickname.replace(/\s+/g, " ").trim();
 
 // ------------------------------------------------------- conversations --
 
 function conversationFor(peer, create) {
-  const key = conversationKey(peer.address, peer.nickname);
+  const key = peerKey(peer);
   let conversation = state.conversations.get(key);
   if (!conversation && create !== false) {
-    conversation = newConversation(key, peer.nickname, peer.address);
+    conversation = newConversation(key, peer.nickname,
+                                   peer.account ? ACCOUNT_ADDRESS : peer.address);
   }
   return conversation;
 }
@@ -630,7 +873,7 @@ function newConversation(key, nickname, address) {
 function peerFor(conversation) {
   let found = null;
   for (const peer of state.peers.values()) {
-    if (conversationKey(peer.address, peer.nickname) === conversation.key) found = peer;
+    if (peerKey(peer) === conversation.key) found = peer;
   }
   return found;
 }
@@ -797,8 +1040,14 @@ function handleChat(channel, line) {
     }
     case "TRANSLATE_GRANTED":
       if (conversation.translateRequest && parts[1] === conversation.translateRequest.id) {
+        const request = conversation.translateRequest;
         conversation.translateRequest = null;
         conversation.translating = true;
+        if (request.mirrored) {
+          // Turned on from another device: its languages, remembered here too.
+          saveTranslationSettings(conversation, Object.assign(translationSettings(conversation),
+            { enabled: true, mine: request.mine, peer: request.peer }));
+        }
         const settings = translationSettings(conversation);
         addNotice(conversation, t("translateOn", languageLabel(settings.mine),
                                   languageLabel(settings.peer)));
@@ -807,7 +1056,8 @@ function handleChat(channel, line) {
       break;
     case "TRANSLATE_REJECT":
       if (conversation.translateRequest && parts[1] === conversation.translateRequest.id) {
-        const automatic = conversation.translateRequest.automatic;
+        const automatic = conversation.translateRequest.automatic ||
+                          conversation.translateRequest.mirrored;
         conversation.translateRequest = null;
         if (!automatic) addNotice(conversation, t("peerAlreadyTranslates"));
         renderTranslateButton();
@@ -825,50 +1075,97 @@ function handleChat(channel, line) {
       addNotice(conversation, t("disabledTranslate", conversation.nickname));
       renderTranslateButton();
       break;
-    case "FILE_BEGIN": {
-      const size = Number(parts[4]);
-      const name = decodeField(parts[2] || "").split(/[\\/]/).pop();
-      const mime = decodeField(parts[3] || "");
-      if (parts.length !== 5 || !Number.isSafeInteger(size) || size < 0 ||
-          size > MAX_FILE_SIZE || !name || name === "." || name === ".." || !mime) return;
-      const message = addMessage(conversation, {
-        out: false, transfer: { name, peer: conversation.nickname, percent: 0 } });
-      channel.files.set(parts[1], { name, mime, size, received: 0, chunks: [], message });
+    case "FILE_BEGIN":
+    case "FILE_CHUNK":
+    case "FILE_END":
+      handleFile(channel, conversation, parts, false);
       break;
-    }
-    case "FILE_CHUNK": {
-      const file = channel.files.get(parts[1]);
-      if (!file || parts.length !== 3) return;
-      let chunk;
-      try { chunk = base64UrlToBytes(parts[2]); } catch { chunk = new Uint8Array(); }
-      if (!chunk.length || file.received + chunk.length > file.size) {
-        channel.files.delete(parts[1]);
-        failTransfer(file.message);
-        return;
-      }
-      file.chunks.push(chunk);
-      file.received += chunk.length;
-      setTransferPercent(file.message, Math.floor(file.received * 100 / file.size));
+    default:
       break;
-    }
-    case "FILE_END": {
-      const file = channel.files.get(parts[1]);
+  }
+}
+
+// FILE_BEGIN, FILE_CHUNK, and FILE_END; `out` for a file another device of
+// this account sent.
+function handleFile(channel, conversation, parts, out) {
+  if (parts[0] === "FILE_BEGIN") {
+    const size = Number(parts[4]);
+    const name = decodeField(parts[2] || "").split(/[\\/]/).pop();
+    const mime = decodeField(parts[3] || "");
+    if (parts.length !== 5 || !Number.isSafeInteger(size) || size < 0 ||
+        size > MAX_FILE_SIZE || !name || name === "." || name === ".." || !mime) return;
+    const message = addMessage(conversation, {
+      out, transfer: { name, peer: conversation.nickname, percent: 0 } });
+    channel.files.set(parts[1], { name, mime, size, received: 0, chunks: [], message });
+  } else if (parts[0] === "FILE_CHUNK") {
+    const file = channel.files.get(parts[1]);
+    if (!file || parts.length !== 3) return;
+    let chunk;
+    try { chunk = base64UrlToBytes(parts[2]); } catch { chunk = new Uint8Array(); }
+    if (!chunk.length || file.received + chunk.length > file.size) {
       channel.files.delete(parts[1]);
-      if (!file) return;
-      if (file.received !== file.size) {
-        failTransfer(file.message);
-        return;
-      }
-      // The progress bubble becomes the attachment.
-      const blob = new Blob(file.chunks, { type: file.mime });
-      file.message.file = { name: file.name, mime: file.mime, url: URL.createObjectURL(blob) };
-      delete file.message.transfer;
-      refreshMessageElement(file.message);
-      saveHistory();
-      renderPeople();
-      announce(conversation, t("sentFile", file.name));
+      failTransfer(file.message);
+      return;
+    }
+    file.chunks.push(chunk);
+    file.received += chunk.length;
+    setTransferPercent(file.message, Math.floor(file.received * 100 / file.size));
+  } else if (parts[0] === "FILE_END") {
+    const file = channel.files.get(parts[1]);
+    channel.files.delete(parts[1]);
+    if (!file) return;
+    if (file.received !== file.size) {
+      failTransfer(file.message);
+      return;
+    }
+    // The progress bubble becomes the attachment.
+    const blob = new Blob(file.chunks, { type: file.mime });
+    file.message.file = { name: file.name, mime: file.mime, url: URL.createObjectURL(blob) };
+    delete file.message.transfer;
+    refreshMessageElement(file.message);
+    saveHistory();
+    renderPeople();
+    if (!out) announce(conversation, t("sentFile", file.name));
+  }
+}
+
+// What another device of this account sent in the same conversation.
+function handleMirror(channel, line) {
+  const conversation = state.conversations.get(channel.key);
+  if (!conversation) return;
+  const parts = line.split(" ");
+  switch (parts[0]) {
+    case "MESSAGE": {
+      if (parts.length !== 2 && !(parts.length === 4 && parts[2] === "ORG_LANG")) return;
+      const text = decodeField(parts[1]);
+      const original = parts.length === 4 ? decodeField(parts[3]) : "";
+      if (!text) return;
+      addMessage(conversation, original ? { out: true, text: original, translation: text }
+                                        : { out: true, text });
       break;
     }
+    case "TRANSLATE_REQUEST":
+      // The peer's TRANSLATE_GRANTED comes to every device of this account.
+      if (parts.length !== 4 || conversation.translating) return;
+      conversation.translateRequest = { id: parts[1], mirrored: true,
+                                        mine: decodeField(parts[2]), peer: decodeField(parts[3]) };
+      renderTranslateButton();
+      break;
+    case "TRANSLATE_STOP":
+    case "TRANSLATE_CANCEL":
+      if (!conversation.translating && !conversation.translateRequest) return;
+      conversation.translating = false;
+      conversation.translateRequest = null;
+      saveTranslationSettings(conversation,
+                              Object.assign(translationSettings(conversation), { enabled: false }));
+      addNotice(conversation, t("translateOffElsewhere"));
+      renderTranslateButton();
+      break;
+    case "FILE_BEGIN":
+    case "FILE_CHUNK":
+    case "FILE_END":
+      handleFile(channel, conversation, parts, true);
+      break;
     default:
       break;
   }
@@ -1605,7 +1902,7 @@ function renderPeople() {
   const entries = [];
   const seen = new Set();
   for (const peer of state.peers.values()) {
-    const key = conversationKey(peer.address, peer.nickname);
+    const key = peerKey(peer);
     if (seen.has(key)) continue;
     seen.add(key);
     entries.push({ key, nickname: peer.nickname, address: peer.address, online: true,
@@ -1731,7 +2028,8 @@ function renderChatHeader() {
     !state.ready ? t("connecting") :
     !online ? t("offline") :
     channel && !channel.handshake ? t("connecting") :
-    `${t(away ? "away" : "online")} · ${peer.web ? "Web" : conversation.address}`;
+    `${t(away ? "away" : "online")} · ${peer.account && peer.devices > 1 ? t("devices", peer.devices)
+                                        : peer.web ? "Web" : peer.address}`;
 }
 
 function renderChat() {
@@ -1969,15 +2267,18 @@ function showLogin(error) {
   $("login-error").textContent = error || "";
   $("login-submit").disabled = false;
   $("login-submit").textContent = t("signIn");
-  (state.nickname ? $("login-password") : $("login-nickname")).focus();
+  (!$("login-pin-field").hidden ? $("login-pin")
+    : state.nickname ? $("login-password") : $("login-nickname")).focus();
 }
 
 // Only a refused password is forgotten: an unreachable server or a sign-in
 // elsewhere (perhaps in another tab sharing this storage) says nothing
 // about it.
-function failSignIn(error, forgetPassword = false) {
+function failSignIn(error, forgetPassword = false, askForPin = false) {
   state.signingIn = false;
   disconnect();
+  $("login-pin-field").hidden = !askForPin;
+  $("login-pin").value = "";
   if (forgetPassword) {
     storage.set("lantalk.password", null);
     storage.set("lantalk.password", null, true);
@@ -1997,6 +2298,9 @@ function startSignIn(nickname, password, automatic = false) {
 
 function signedIn() {
   state.signingIn = false;
+  state.pinOffered = state.pinOffered && state.nickname === state.lastNickname;
+  state.lastNickname = state.nickname;
+  $("login-pin-field").hidden = true;
   showBanner("");
   $("login").hidden = true;
   $("app").hidden = false;
@@ -2009,6 +2313,8 @@ function signedIn() {
   } else {
     renderChat();
   }
+  renderPinButton();
+  offerPin();
 }
 
 function signOut() {
@@ -2048,6 +2354,16 @@ function setup() {
     if (!nickname) return;
     const password = $("login-password").value;
     const remember = $("login-remember").checked;
+    if (!$("login-pin-field").hidden) {
+      const pin = $("login-pin").value;
+      if (!isPin(pin)) {
+        $("login-error").textContent = t("pinFourDigits");
+        $("login-error").hidden = false;
+        return;
+      }
+      state.nickname = nickname;
+      storage.set(pinKey(), pinVerifier(pin));
+    }
     storage.set("lantalk.nickname", nickname);
     storage.set("lantalk.password", remember ? password : null);
     storage.set("lantalk.password", password, true);
@@ -2059,6 +2375,12 @@ function setup() {
   };
 
   $("sign-out").onclick = signOut;
+  $("pin-button").onclick = openPinSheet;
+  $("pin-later").onclick = () => closePinSheet(true);
+  $("pin-form").onsubmit = event => {
+    event.preventDefault();
+    submitPin();
+  };
   setupTranslation();
   $("back").onclick = () => history.back();
   $("search").oninput = renderPeople;

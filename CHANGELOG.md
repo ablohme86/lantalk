@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Added
+
+- Personal PIN: the first time a nickname signs in to a central host,
+  LANTalk, the TUI, and the web client offer to protect it with a 4-digit
+  PIN. With it, the same nickname can be signed in on several devices at
+  once: others see one person, every device gets the conversation, and what
+  one device sends shows up on the others as sent (files and Live Translate
+  included). Nobody can sign in with the nickname without the PIN; five
+  wrong ones lock it for a while. **Settings → Personal PIN...**, `/pin`, and
+  the web client's lock button set or change it later.
+- `lantalkd` keeps the history of every conversation a PIN-protected
+  nickname has, in its data folder (`--data-dir`, `/var/lib/lantalkd` under
+  systemd), so a device that was off or new catches up when it signs in.
+  `--remove-pin <nickname>` removes a forgotten PIN, `--list-pins` lists
+  them.
+
 ## v1.13.0 - 2026-10-24
 
 ### Added
