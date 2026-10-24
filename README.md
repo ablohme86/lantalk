@@ -132,6 +132,8 @@ In central mode LANTalk:
 - lists the clients connected to the central host in the host selector
   (`HOSTS ON NETWORK` in the TUI), shown as `Nickname (IP address)` with the
   address the central host sees;
+- looks for Ollama servers only on this computer and at the configured URL,
+  not on the network cards' subnets;
 - sends every conversation through the central host. Everything else works
   as before: tabs, history, reconnects, typing, quotes, files, and Live
   Translate, which still translates locally with your own Ollama server.

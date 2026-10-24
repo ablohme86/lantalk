@@ -31,6 +31,10 @@ public:
     // cards' subnets.
     void setPort(quint16 port);
     void setCandidates(const QList<QHostAddress> &hosts);
+    // Off: only this computer and the configured URL are checked. Used in
+    // central host mode, where the network cards may be VPN adapters that
+    // accept every connection.
+    void setScanLocalNetwork(bool enabled);
     static QList<QHostAddress> localCandidates();
 
 signals:
@@ -48,6 +52,7 @@ private:
     QQueue<QHostAddress> pendingHosts_;
     QList<QHostAddress> candidates_;
     bool fixedCandidates_ = false;
+    bool scanLocalNetwork_ = true;
     quint16 port_ = DefaultPort;
     int activeProbes_ = 0;
     int activeChecks_ = 0;

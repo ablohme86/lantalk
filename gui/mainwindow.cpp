@@ -85,7 +85,6 @@ MainWindow::MainWindow() {
       setTabUnread(tab, false);
     }
   });
-  promptForNickname();
   connect(&server_, &QTcpServer::newConnection, this,
           &MainWindow::acceptConnection);
   connect(&central_, &CentralClient::incomingConnection, this,
@@ -94,15 +93,20 @@ MainWindow::MainWindow() {
           &MainWindow::refreshHostList);
   connect(&central_, &CentralClient::stateChanged, this,
           &MainWindow::updateCentralStatus);
-  applyNetworkMode();
   // Ollama servers on the network make Live Translate available; look again
   // every few minutes.
   ollamaScanTimer_.setInterval(5 * 60 * 1000);
   connect(&ollamaScanTimer_, &QTimer::timeout, &ollamaDiscovery_,
           &OllamaDiscovery::scan);
-  ollamaScanTimer_.start();
-  ollamaDiscovery_.scan();
-  restoreOpenConnections();
+  // The window is on screen before the nickname prompt and the network
+  // start, so a slow network never looks like LANTalk failed to start.
+  QTimer::singleShot(0, this, [this] {
+    promptForNickname();
+    applyNetworkMode();
+    ollamaScanTimer_.start();
+    ollamaDiscovery_.scan();
+    restoreOpenConnections();
+  });
 }
 
 void MainWindow::showSettings() {
@@ -134,6 +138,7 @@ void MainWindow::applyNetworkMode() {
   const auto password =
       settings.value(QStringLiteral("network/centralPassword")).toString();
   QString modeKey;
+  ollamaDiscovery_.setScanLocalNetwork(centralHost.isEmpty());
   if (centralHost.isEmpty()) {
     central_.stop();
     ChatTransport::setFactory({});

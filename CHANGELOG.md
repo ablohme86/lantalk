@@ -8,6 +8,21 @@
   `lantalk-centralized-service`). On Linux, `make lantalkd` builds only the
   service and `sudo make install` installs it with a systemd unit and
   `/etc/lantalk/lantalkd.conf` for the password and options.
+- In central host mode, LANTalk looks for Ollama only on this computer and
+  at the configured URL instead of scanning the network cards' subnets,
+  which may be VPN adapters that accept every connection.
+
+### Fixed
+
+- The main window appears before the nickname prompt and before LANTalk
+  starts listening and scanning, so a slow network (for example with a VPN)
+  no longer leaves it without a window.
+- Starting LANTalk while a hung copy is still running showed nothing and
+  exited; it now says that LANTalk is running but not responding and how
+  to end it.
+- LAN discovery reads this computer's addresses at most every five seconds
+  instead of for every discovery message, which was slow on Windows with
+  VPN adapters.
 
 ## v1.8.0 - 2026-10-24
 

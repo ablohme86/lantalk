@@ -54,6 +54,21 @@ private slots:
     QCOMPARE(discovery.servers().first().url, ollama.url());
   }
 
+  void checksOnlyThisComputerWithoutLocalNetworkScan() {
+    FakeOllama ollama({QStringLiteral("translator")});
+    QVERIFY(ollama.listen());
+    OllamaDiscovery discovery;
+    discovery.setPort(ollama.port());
+    discovery.setScanLocalNetwork(false);
+    QSignalSpy finished(&discovery, &OllamaDiscovery::scanFinished);
+
+    discovery.scan();
+    QTRY_COMPARE_WITH_TIMEOUT(finished.size(), 1, 5000);
+    QCOMPARE(discovery.servers().size(), 1);
+    QCOMPARE(discovery.servers().first().url,
+             QStringLiteral("http://127.0.0.1:%1").arg(ollama.port()));
+  }
+
   void ignoresServersWithoutModels() {
     FakeOllama ollama({});
     QVERIFY(ollama.listen());

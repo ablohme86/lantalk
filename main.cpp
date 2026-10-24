@@ -1,9 +1,11 @@
 #include <QApplication>
 #include <QAbstractSocket>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QMessageBox>
 #include <QSettings>
 #include <QTimer>
 
@@ -23,7 +25,8 @@
 
 namespace {
 
-enum class InstanceResult { Primary, Existing, Error };
+enum class InstanceResult { Primary, Existing, Unresponsive, Error };
+enum class Activation { Activated, NotResponding, NoInstance };
 
 bool isInteractiveTerminal()
 {
@@ -39,42 +42,77 @@ QString instanceServerName() {
       .arg(QCoreApplication::applicationName().toLower());
 }
 
-bool activateExistingInstance(const QString &name) {
+// The running instance answers 'K' once it has shown its window (versions
+// before 1.9 just hang up). An instance that accepts the connection but
+// neither answers nor hangs up is hung; its listener would otherwise make
+// every later launch exit without a word.
+Activation activateExistingInstance(const QString &name) {
   QLocalSocket socket;
-  socket.connectToServer(name, QIODevice::WriteOnly);
+  socket.connectToServer(name, QIODevice::ReadWrite);
   if (!socket.waitForConnected(350)) {
-    return false;
+    return Activation::NoInstance;
   }
   if (socket.write("A", 1) != 1) {
-    return false;
+    return Activation::NotResponding;
   }
   socket.flush();
   socket.waitForBytesWritten(350);
-  return true;
+  QByteArray reply;
+  QElapsedTimer elapsed;
+  elapsed.start();
+  while (!reply.contains('K') && elapsed.elapsed() < 3000 &&
+         socket.state() == QLocalSocket::ConnectedState) {
+    if (socket.waitForReadyRead(int(3000 - elapsed.elapsed()))) {
+      reply += socket.readAll();
+    }
+  }
+  reply += socket.readAll();
+  return reply.contains('K') || socket.state() != QLocalSocket::ConnectedState
+             ? Activation::Activated
+             : Activation::NotResponding;
+}
+
+InstanceResult instanceResultFor(Activation activation) {
+  return activation == Activation::Activated ? InstanceResult::Existing
+                                             : InstanceResult::Unresponsive;
 }
 
 InstanceResult startInstanceServer(QLocalServer &server) {
   const auto name = instanceServerName();
-  if (activateExistingInstance(name)) {
-    return InstanceResult::Existing;
+  if (const auto activation = activateExistingInstance(name);
+      activation != Activation::NoInstance) {
+    return instanceResultFor(activation);
   }
   server.setSocketOptions(QLocalServer::UserAccessOption);
   if (server.listen(name)) {
     return InstanceResult::Primary;
   }
   if (server.serverError() == QAbstractSocket::AddressInUseError) {
-    if (activateExistingInstance(name)) {
-      return InstanceResult::Existing;
+    if (const auto activation = activateExistingInstance(name);
+        activation != Activation::NoInstance) {
+      return instanceResultFor(activation);
     }
     QLocalServer::removeServer(name);
     if (server.listen(name)) {
       return InstanceResult::Primary;
     }
-    if (activateExistingInstance(name)) {
-      return InstanceResult::Existing;
+    if (const auto activation = activateExistingInstance(name);
+        activation != Activation::NoInstance) {
+      return instanceResultFor(activation);
     }
   }
   return InstanceResult::Error;
+}
+
+QString unresponsiveInstanceMessage() {
+#ifdef Q_OS_WIN
+  const auto howToEnd = QStringLiteral("End lantalk.exe in Task Manager");
+#else
+  const auto howToEnd = QStringLiteral("Stop the lantalk process");
+#endif
+  return QStringLiteral("LANTalk is already running but does not respond. "
+                        "%1 and start LANTalk again.")
+      .arg(howToEnd);
 }
 
 void watchForActivation(QLocalServer &server, QObject *context,
@@ -87,6 +125,7 @@ void watchForActivation(QLocalServer &server, QObject *context,
                          const auto request = socket->readAll();
                          if (request.contains('A')) {
                            activate();
+                           socket->write("K", 1);
                          }
                          socket->disconnectFromServer();
                        };
@@ -125,6 +164,10 @@ int main(int argc, char *argv[]) {
     QLocalServer instanceServer;
     const auto instanceResult = startInstanceServer(instanceServer);
     if (instanceResult == InstanceResult::Existing) return 0;
+    if (instanceResult == InstanceResult::Unresponsive) {
+      std::fprintf(stderr, "%s\n", qPrintable(unresponsiveInstanceMessage()));
+      return 1;
+    }
     if (instanceResult == InstanceResult::Error) {
       std::fprintf(stderr, "LANTalk could not create its single-instance listener.\n");
       return 1;
@@ -151,6 +194,11 @@ int main(int argc, char *argv[]) {
   QLocalServer instanceServer;
   const auto instanceResult = startInstanceServer(instanceServer);
   if (instanceResult == InstanceResult::Existing) return 0;
+  if (instanceResult == InstanceResult::Unresponsive) {
+    QMessageBox::warning(nullptr, QStringLiteral("LANTalk"),
+                         unresponsiveInstanceMessage());
+    return 1;
+  }
   if (instanceResult == InstanceResult::Error) {
     std::fprintf(stderr, "LANTalk could not create its single-instance listener.\n");
     return 1;

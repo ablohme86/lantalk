@@ -49,6 +49,11 @@ void OllamaDiscovery::setCandidates(const QList<QHostAddress> &hosts)
     fixedCandidates_ = true;
 }
 
+void OllamaDiscovery::setScanLocalNetwork(bool enabled)
+{
+    scanLocalNetwork_ = enabled;
+}
+
 QList<QHostAddress> OllamaDiscovery::localCandidates()
 {
     QSet<quint32> addresses;
@@ -85,7 +90,10 @@ void OllamaDiscovery::scan()
     if (scanning_) return;
     scanning_ = true;
     found_.clear();
-    const auto hosts = fixedCandidates_ ? candidates_ : localCandidates();
+    const auto hosts = fixedCandidates_ ? candidates_
+                       : scanLocalNetwork_
+                           ? localCandidates()
+                           : QList<QHostAddress>{QHostAddress(QHostAddress::LocalHost)};
     for (const auto &host : hosts) pendingHosts_.enqueue(host);
 
     // The configured server may be anywhere, on any port.

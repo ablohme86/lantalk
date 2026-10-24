@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QElapsedTimer>
 #include <QHostAddress>
 #include <QList>
 #include <QNetworkInterface>
@@ -33,14 +34,23 @@ inline bool isLocalIPv4Address(const QHostAddress &address)
     if (address.protocol() != QAbstractSocket::IPv4Protocol) {
         return false;
     }
-    for (const auto &interface : QNetworkInterface::allInterfaces()) {
-        for (const auto &entry : interface.addressEntries()) {
-            if (entry.ip() == address) {
-                return true;
+    // Reading the network cards is slow on Windows with VPN adapters, and
+    // this runs for every discovery datagram, so the list is reused for a
+    // few seconds.
+    static QSet<quint32> localAddresses;
+    static QElapsedTimer age;
+    if (!age.isValid() || age.hasExpired(5000)) {
+        localAddresses.clear();
+        for (const auto &interface : QNetworkInterface::allInterfaces()) {
+            for (const auto &entry : interface.addressEntries()) {
+                if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol) {
+                    localAddresses.insert(entry.ip().toIPv4Address());
+                }
             }
         }
+        age.start();
     }
-    return false;
+    return localAddresses.contains(address.toIPv4Address());
 }
 
 inline QList<QHostAddress> privateSubnetHosts()
