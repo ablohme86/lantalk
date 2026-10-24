@@ -29,6 +29,8 @@ public:
     quint16 port = 0;
     // Signed in from lantalkd's web client (CENTRAL_PEER_KIND <id> web).
     bool web = false;
+    // Away from their client (CENTRAL_PEER_STATUS <id> away).
+    bool away = false;
   };
 
   explicit CentralClient(QObject *parent = nullptr);
@@ -53,6 +55,8 @@ public:
   // The central host has an Ollama server that answers with its model
   // (CENTRAL_OLLAMA), so it can translate for Live Translate.
   bool canTranslate() const;
+  // Tells the central host, and so everyone, that this user is away.
+  void setAway(bool away);
   // Translates a message on the central host (CENTRAL_TRANSLATE); `done`
   // gets the translation, or the error with ok false, always later.
   void translate(const QString &message, const QString &sourceLanguage,
@@ -111,6 +115,7 @@ private:
   QList<Peer> peers_;
   qint64 maximumFileSize_ = -1;
   bool canTranslate_ = false;
+  bool away_ = false;
   struct PendingTranslation {
     std::function<void(bool, const QString &)> done;
     QTimer *timeout;

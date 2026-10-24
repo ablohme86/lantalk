@@ -141,6 +141,13 @@ qint64 CentralClient::maximumFileSize() const { return maximumFileSize_; }
 
 bool CentralClient::canTranslate() const { return ready_ && canTranslate_; }
 
+void CentralClient::setAway(bool away) {
+  if (away_ == away) return;
+  away_ = away;
+  if (ready_) sendLine(away ? QStringLiteral("CENTRAL_STATUS away")
+                            : QStringLiteral("CENTRAL_STATUS active"));
+}
+
 void CentralClient::translate(const QString &message,
                               const QString &sourceLanguage,
                               const QString &targetLanguage,
@@ -360,6 +367,16 @@ void CentralClient::processLine(const QString &line) {
     }
     return;
   }
+  if (command == QStringLiteral("CENTRAL_PEER_STATUS") && parts.size() == 3) {
+    for (auto &peer : peers_) {
+      if (peer.id == parts.at(1)) {
+        peer.away = parts.at(2) == QStringLiteral("away");
+        if (ready_) emit peersChanged();
+        break;
+      }
+    }
+    return;
+  }
   if (command == QStringLiteral("CENTRAL_PEER_KIND") && parts.size() == 3) {
     for (auto &peer : peers_) {
       if (peer.id == parts.at(1)) {
@@ -384,6 +401,8 @@ void CentralClient::processLine(const QString &line) {
     // The peer list precedes the welcome, so it is complete now.
     clientId_ = parts.at(1);
     ready_ = true;
+    // The service takes everyone for active until told otherwise.
+    if (away_) sendLine(QStringLiteral("CENTRAL_STATUS away"));
     lastError_.clear();
     emit peersChanged();
     emit stateChanged();

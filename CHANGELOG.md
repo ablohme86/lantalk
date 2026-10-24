@@ -2,9 +2,55 @@
 
 ## Unreleased
 
+### Added
+
+- Away status: after 10 minutes without touching LANTalk (keyboard or mouse
+  in the GUI, a key in the TUI, a touch or key on the web page), others see
+  you with a yellow dot instead of a green one, on conversation tabs, in the
+  Hosts sidebar, and on the web client (`(away)` in the TUI). It travels as
+  `PRESENCE AWAY|ACTIVE` in conversations with peers that support it and
+  through `lantalkd` for its host list.
+
+### Changed
+
+- Files up to 1 GB can be sent (was 50 MB), in LANTalk and on the web
+  client; `lantalkd --max-file-size` can still lower that. Received files
+  are written to disk as they arrive and the web client reads files in
+  pieces, so large files no longer sit in memory. LANTalk tells peers that
+  it takes large files (`CAPABILITIES LARGEFILES`) and sends at most 50 MB
+  to older versions, saying why.
+- Through a central host, a dropped conversation reconnects as soon as
+  `lantalkd` reports the peer online again, instead of retrying every 10
+  seconds; the status says it is waiting for them. The TUI, which did not
+  reconnect by itself before, does this too, and the web client reopens
+  the conversation in view.
+- `lantalkd` paces relayed conversations: while a receiver has more than a
+  few megabytes waiting, it stops reading from the sender, so TCP slows the
+  sender down instead of `lantalkd` buffering whole files or dropping the
+  conversation of a slow receiver.
+
 ## v1.12.0 - 2026-10-24
 
+### Changed
+
+- The GUI lists the available hosts in a **Hosts** sidebar, as the TUI and
+  the web client do, instead of a drop-down list: nickname with the address
+  (or `Web`) below it, one click to open or switch to the conversation, and
+  the open conversation's host selected. The sidebar's width is remembered.
+- Conversation tabs show a green dot while the conversation is connected
+  and a red one while it is not (connecting, reconnecting, or
+  disconnected).
+
 ## v1.11.0 - 2026-10-24
+
+### Added
+
+- LANTalk (GUI and TUI) uses Live Translate through the central host when
+  `lantalkd` has an Ollama server configured (`--ollama-url`,
+  `--ollama-model`) that answers with its model; no Ollama server of your
+  own is needed, and the dialog only asks for the languages. `lantalkd`
+  checks that server every minute and logs when it becomes available or
+  stops answering.
 
 ## v1.10.0 - 2026-10-24
 
@@ -37,12 +83,6 @@
 - `lantalkd --max-file-size <MB>` limits the files it relays (default 50;
   0 relays none). Clients refuse larger files at once, and `lantalkd`
   stops them from older clients.
-- LANTalk (GUI and TUI) uses Live Translate through the central host when
-  `lantalkd` has an Ollama server configured (`--ollama-url`,
-  `--ollama-model`) that answers with its model; no Ollama server of your
-  own is needed, and the dialog only asks for the languages. `lantalkd`
-  checks that server every minute and logs when it becomes available or
-  stops answering.
 - Chat history keeps every message instead of the last 500, in a file per
   conversation (existing history moves there by itself). A reopened
   conversation shows the last 200, and **Show earlier messages** loads 200
@@ -51,13 +91,6 @@
 
 ### Changed
 
-- The GUI lists the available hosts in a **Hosts** sidebar, as the TUI and
-  the web client do, instead of a drop-down list: nickname with the address
-  (or `Web`) below it, one click to open or switch to the conversation, and
-  the open conversation's host selected. The sidebar's width is remembered.
-- Conversation tabs show a green dot while the conversation is connected
-  and a red one while it is not (connecting, reconnecting, or
-  disconnected).
 - While the other person has Live Translate on, your Live Translate button
   is disabled and says why, so only one side translates at a time.
 

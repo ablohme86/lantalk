@@ -4,7 +4,9 @@
 #include "protocol/centralclient.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QHash>
+#include <QSet>
 #include <QList>
 #include <QObject>
 #include <QHostAddress>
@@ -39,6 +41,7 @@ private:
     QDateTime lastSeen;
     // Signed in from lantalkd's web client.
     bool web = false;
+    bool away = false;
   };
 
   struct Conversation {
@@ -75,6 +78,11 @@ private:
   void stopDiscovery();
   void reportCentralState();
   void updateCentralTranslation();
+  void reconnectArrivedPeers();
+  // Any key counts as activity (see AwayAfterMs).
+  void noteActivity();
+  // What to do about the current, disconnected conversation.
+  QString disconnectedHint() const;
   void announcePresence();
   void readDiscoveryDatagrams();
   void scanPrivateSubnets();
@@ -139,6 +147,9 @@ private:
   const QString discoveryId_ =
       QUuid::createUuid().toString(QUuid::WithoutBraces);
   QHash<QString, DiscoveredHost> discoveredHosts_;
+  QSet<QString> centralPeersSeen_;
+  QElapsedTimer lastActivity_;
+  QTimer awayTimer_;
   QList<Conversation> conversations_;
   int currentConversation_ = -1;
   int selectedConversation_ = -1;

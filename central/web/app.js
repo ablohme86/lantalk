@@ -59,6 +59,7 @@ const TEXTS = {
   noMatches: ["Nobody matches “%1”.", "Ingen treff for «%1».",
               "没有与“%1”匹配的用户。", "沒有與「%1」相符的使用者。"],
   online: ["Online", "Pålogget", "在线", "在線上"],
+  away: ["Away", "Borte", "离开", "離開"],
   offline: ["Offline", "Frakoblet", "离线", "離線"],
   connecting: ["Connecting…", "Kobler til…", "正在连接…", "正在連線…"],
   reconnecting: ["Connection lost. Reconnecting…", "Mistet forbindelsen. Kobler til igjen…",
@@ -82,6 +83,10 @@ const TEXTS = {
   fileTooLarge: ["Files larger than %1 cannot be sent.",
                  "Filer større enn %1 kan ikke sendes.",
                  "无法发送大于 %1 的文件。", "無法傳送大於 %1 的檔案。"],
+  olderLanTalk: ["%1 uses an older LANTalk, which accepts files up to %2.",
+                 "%1 bruker en eldre LANTalk, som tar imot filer på opptil %2.",
+                 "%1 使用的是旧版 LANTalk，只接受不超过 %2 的文件。",
+                 "%1 使用的是舊版 LANTalk，只接受不超過 %2 的檔案。"],
   noFiles: ["This server does not relay files.", "Denne serveren videresender ikke filer.",
             "此服务器不转发文件。", "此伺服器不轉送檔案。"],
   uploading: ["Uploading %1 to %2. %3%…", "Laster opp %1 til %2. %3%…",
@@ -319,8 +324,14 @@ const conversationKey = (address, nickname) => `${address}|${normalizeNickname(n
 
 // Values the desktop client uses too (appconfig.h).
 const CHAT_PORT = 45454;
-const MAX_FILE_SIZE = 50 * 1024 * 1024;
+const MAX_FILE_SIZE = 1024 * 1024 * 1024;
+// What peers accept that do not advertise CAPABILITIES LARGEFILES.
+const LEGACY_MAX_FILE_SIZE = 50 * 1024 * 1024;
+// How long to wait for a peer's CAPABILITIES before sending anything;
+// LANChat and early LANTalk versions never send them.
+const CAPABILITIES_WAIT_MS = 1500;
 const CHUNK_SIZE = 16 * 1024;
+const FILE_BLOCK_SIZE = 256 * 1024;
 const PING_INTERVAL_MS = 25 * 1000;
 // Like LANTalk (CentralProtocol::IdleTimeoutMs): a connection that has been
 // silent this long is dead, even if the browser has not noticed.
@@ -332,6 +343,8 @@ const TYPING_IDLE_MS = 60 * 1000;
 const TYPING_EXPIRY_MS = 35 * 1000;
 // Per conversation; the browser's storage for the page is a few megabytes.
 const HISTORY_LIMIT = 1000;
+// Like LANTalk (AwayAfterMs): untouched this long, the user shows as away.
+const AWAY_AFTER_MS = 10 * 60 * 1000;
 
 const state = {
   socket: null,
@@ -352,6 +365,8 @@ const state = {
   current: null,            // key of the open conversation
   ollama: { configured: false, discovery: false, scanning: false, servers: [] },
   maxFileSize: MAX_FILE_SIZE, // lantalkd may allow less (CENTRAL_FILE_LIMIT)
+  away: false,
+  lastActivity: Date.now(),
   translations: new Map(),  // request id -> {resolve, reject, timer}
 };
 
@@ -461,13 +476,24 @@ function handleCentral(line) {
                        address: parts[3], port: Number(parts[4]) };
         if (peer.nickname && peer.id !== state.myId) {
           state.peers.set(peer.id, peer);
-          // Messages written while they were away go out now.
+          // Messages written while they were away go out now, and an open
+          // conversation picks up again.
           const conversation = conversationFor(peer, false);
-          if (conversation && conversation.queue.length) ensureChannel(conversation);
+          if (conversation && (conversation.queue.length || state.current === conversation.key)) {
+            ensureChannel(conversation);
+          }
           if (state.ready) { renderPeople(); renderChatHeader(); }
         }
       }
       break;
+    case "CENTRAL_PEER_STATUS": {
+      const peer = state.peers.get(parts[1]);
+      if (peer) {
+        peer.away = parts[2] === "away";
+        if (state.ready) { renderPeople(); renderChatHeader(); }
+      }
+      break;
+    }
     case "CENTRAL_PEER_KIND": {
       const peer = state.peers.get(parts[1]);
       if (peer) {
@@ -487,6 +513,8 @@ function handleCentral(line) {
       state.myAddress = parts[2] || "";
       state.ready = true;
       state.retryDelay = 1000;
+      // The service takes everyone for active until told otherwise.
+      if (state.away) sendCentral("CENTRAL_STATUS away");
       clearInterval(state.pingTimer);
       state.pingTimer = setInterval(() => {
         if (Date.now() - state.lastReceived > IDLE_TIMEOUT_MS) dropConnection();
@@ -646,6 +674,7 @@ function channelClosed(channel, notify) {
   conversation.translating = false;
   conversation.translateRequest = null;
   conversation.peerTranslating = false;
+  conversation.peerAway = false;
   setPeerTyping(conversation, false);
   stopLocalTyping(conversation);
   if (channel.handshake && notify) {
@@ -660,11 +689,12 @@ function sendChat(channel, line) {
 }
 
 // Sends a LANCHAT line to the person, once the channel's handshake is done.
+// `line` may be a function of the channel, returning the line or null to
+// send nothing, for lines that depend on what the peer supports.
 function sendToConversation(conversation, line, onSent) {
   const channel = currentChannel(conversation);
-  if (channel && channel.handshake) {
-    sendChat(channel, line);
-    if (onSent) onSent();
+  if (channel && channel.handshake && channel.sendReady) {
+    sendItem(channel, { line, onSent });
     return true;
   }
   conversation.queue.push({ line, onSent });
@@ -686,10 +716,11 @@ function handleChat(channel, line) {
     const first = !channel.handshake;
     channel.handshake = true;
     if (first) {
-      sendChat(channel, "CAPABILITIES TYPING");
+      sendChat(channel, "CAPABILITIES TYPING LARGEFILES PRESENCE");
+      channel.capabilitiesTimer =
+        setTimeout(() => readyToSend(conversation, channel), CAPABILITIES_WAIT_MS);
       if (conversation.channel === channel.id) {
         addNotice(conversation, t("connectedTo", name));
-        flushQueue(conversation, channel);
         // Live Translate comes back on by itself, like in LANTalk.
         if (translationSettings(conversation).enabled) requestTranslation(conversation, true);
       }
@@ -717,7 +748,20 @@ function handleChat(channel, line) {
     }
     case "CAPABILITIES":
       channel.supportsTyping = parts.includes("TYPING");
+      channel.largeFiles = parts.includes("LARGEFILES");
+      if (!channel.presence && parts.includes("PRESENCE")) {
+        channel.presence = true;
+        if (state.away) sendChat(channel, "PRESENCE AWAY");
+      }
       if (channel.supportsTyping && conversation.localTyping) sendChat(channel, "TYPING START");
+      readyToSend(conversation, channel);
+      break;
+    case "PRESENCE":
+      if (parts[1] === "AWAY" || parts[1] === "ACTIVE") {
+        conversation.peerAway = parts[1] === "AWAY";
+        renderPeople();
+        renderChatHeader();
+      }
       break;
     case "TYPING":
       if (parts[1] === "START") {
@@ -830,12 +874,20 @@ function handleChat(channel, line) {
   }
 }
 
-function flushQueue(conversation, channel) {
-  const queue = conversation.queue.splice(0);
-  for (const item of queue) {
-    sendChat(channel, item.line);
-    if (item.onSent) item.onSent();
-  }
+function sendItem(channel, item) {
+  const line = typeof item.line === "function" ? item.line(channel) : item.line;
+  if (line === null) return;
+  sendChat(channel, line);
+  if (item.onSent) item.onSent();
+}
+
+// Once the peer's capabilities are known (or clearly will not come).
+function readyToSend(conversation, channel) {
+  clearTimeout(channel.capabilitiesTimer);
+  if (channel.sendReady || !state.channels.has(channel.id)) return;
+  channel.sendReady = true;
+  if (conversation.channel !== channel.id) return;
+  for (const item of conversation.queue.splice(0)) sendItem(channel, item);
 }
 
 // ------------------------------------------------------------- typing --
@@ -963,31 +1015,55 @@ async function sendFile(conversation, file) {
     file: { name: file.name, mime: file.type || "application/octet-stream",
             url: URL.createObjectURL(file) },
   });
-  const bytes = new Uint8Array(await file.arrayBuffer());
   const id = uuid();
-  const begin = `FILE_BEGIN ${id} ${encodeField(file.name)} ` +
-                `${encodeField(message.file.mime)} ${bytes.length}`;
-  sendToConversation(conversation, begin, () => pumpFile(conversation, message, id, bytes, 0));
+  const begin = channel => {
+    // An older LANTalk would turn the file down without saying so.
+    if (!channel.largeFiles && file.size > LEGACY_MAX_FILE_SIZE) {
+      failTransfer(message);
+      addNotice(conversation, t("olderLanTalk", conversation.nickname,
+                                formatSize(LEGACY_MAX_FILE_SIZE)));
+      return null;
+    }
+    return `FILE_BEGIN ${id} ${encodeField(file.name)} ` +
+           `${encodeField(message.file.mime)} ${file.size}`;
+  };
+  sendToConversation(conversation, begin, () => pumpFile(conversation, message, id, file, 0));
 }
 
-function pumpFile(conversation, message, id, bytes, offset) {
-  const channel = currentChannel(conversation);
-  if (!channel || !state.socket || message.transfer.failed) {
+// Reads the file a block at a time, so a large one never sits in memory,
+// and sends while the connection keeps up.
+async function pumpFile(conversation, message, id, file, offset) {
+  const usable = () => {
+    const channel = currentChannel(conversation);
+    if (channel && state.socket && !message.transfer.failed) return channel;
     // The connection went away mid-file, or the server refused it.
     message.transfer.failed = true;
     message.pending = false;
     refreshMessageElement(message);
-    return;
-  }
+    return null;
+  };
+  let channel = usable();
+  if (!channel) return;
   channel.outgoingFiles.set(id, message);
-  while (offset < bytes.length && state.socket.bufferedAmount < 256 * 1024) {
-    const chunk = bytes.subarray(offset, offset + CHUNK_SIZE);
-    sendChat(channel, `FILE_CHUNK ${id} ${bytesToBase64Url(chunk)}`);
-    offset += chunk.length;
+  if (offset < file.size && state.socket.bufferedAmount < 256 * 1024) {
+    let block;
+    try {
+      block = new Uint8Array(await file.slice(offset, offset + FILE_BLOCK_SIZE).arrayBuffer());
+    } catch {
+      failTransfer(message);
+      return;
+    }
+    channel = usable();
+    if (!channel) return;
+    for (let index = 0; index < block.length; index += CHUNK_SIZE) {
+      sendChat(channel, `FILE_CHUNK ${id} ${bytesToBase64Url(block.subarray(index, index + CHUNK_SIZE))}`);
+    }
+    offset += block.length;
   }
-  setTransferPercent(message, bytes.length ? Math.floor(offset * 100 / bytes.length) : 100);
-  if (offset < bytes.length) {
-    setTimeout(() => pumpFile(conversation, message, id, bytes, offset), 30);
+  setTransferPercent(message, file.size ? Math.floor(offset * 100 / file.size) : 100);
+  if (offset < file.size) {
+    setTimeout(() => pumpFile(conversation, message, id, file, offset),
+               state.socket && state.socket.bufferedAmount < 256 * 1024 ? 0 : 30);
     return;
   }
   // Kept in outgoingFiles: a small file is all sent before lantalkd can
@@ -1500,7 +1576,7 @@ function updateTitle() {
 const AVATAR_COLORS = ["#17bcae", "#8069e8", "#0b84fe", "#e8578a", "#f08c2e",
                        "#2fa84f", "#c94fd6", "#d9a400", "#4f7be8", "#e0544b"];
 
-function avatar(element, nickname, online) {
+function avatar(element, nickname, online, away = false) {
   let hash = 0;
   for (const character of normalizeNickname(nickname)) {
     hash = (hash * 31 + character.codePointAt(0)) >>> 0;
@@ -1508,6 +1584,12 @@ function avatar(element, nickname, online) {
   element.style.background = AVATAR_COLORS[hash % AVATAR_COLORS.length];
   element.textContent = Array.from(nickname.trim())[0] || "?";
   element.classList.toggle("online", online);
+  element.classList.toggle("away", online && away);
+}
+
+// The peer says so on the conversation, or lantalkd does.
+function isAway(peer, conversation) {
+  return Boolean((peer && peer.away) || (conversation && conversation.peerAway));
 }
 
 function showBanner(text) {
@@ -1527,6 +1609,7 @@ function renderPeople() {
     if (seen.has(key)) continue;
     seen.add(key);
     entries.push({ key, nickname: peer.nickname, address: peer.address, online: true,
+                   away: isAway(peer, state.conversations.get(key)),
                    conversation: state.conversations.get(key) });
   }
   for (const conversation of state.conversations.values()) {
@@ -1560,7 +1643,7 @@ function renderPeople() {
 
     const face = document.createElement("div");
     face.className = "avatar";
-    avatar(face, entry.nickname, entry.online);
+    avatar(face, entry.nickname, entry.online, entry.away);
 
     const text = document.createElement("div");
     text.className = "person-text";
@@ -1586,7 +1669,7 @@ function renderPeople() {
       const body = last.file ? `📎 ${last.file.name}` : preview(last.text);
       line.textContent = last.out ? `${t("you")}: ${body}` : body;
     } else {
-      line.textContent = entry.online ? t("online") : t("offline");
+      line.textContent = !entry.online ? t("offline") : entry.away ? t("away") : t("online");
     }
     text.append(name, line);
     button.append(face, text);
@@ -1638,15 +1721,17 @@ function closeConversation() {
 function renderChatHeader() {
   const conversation = state.conversations.get(state.current);
   if (!conversation) return;
-  const online = Boolean(peerFor(conversation));
+  const peer = peerFor(conversation);
+  const online = Boolean(peer);
+  const away = isAway(peer, conversation);
   $("chat-name").textContent = conversation.nickname;
-  avatar($("chat-avatar"), conversation.nickname, online);
+  avatar($("chat-avatar"), conversation.nickname, online, away);
   const channel = currentChannel(conversation);
   $("chat-status").textContent =
     !state.ready ? t("connecting") :
     !online ? t("offline") :
     channel && !channel.handshake ? t("connecting") :
-    `${t("online")} · ${peerFor(conversation).web ? "Web" : conversation.address}`;
+    `${t(away ? "away" : "online")} · ${peer.web ? "Web" : conversation.address}`;
 }
 
 function renderChat() {
@@ -1862,6 +1947,17 @@ function submitMessage() {
   autoGrow();
 }
 
+// Tells lantalkd and every conversation that supports it.
+function setAway(away) {
+  state.away = away;
+  sendCentral(`CENTRAL_STATUS ${away ? "away" : "active"}`);
+  for (const channel of state.channels.values()) {
+    if (channel.handshake && channel.presence) {
+      sendChat(channel, `PRESENCE ${away ? "AWAY" : "ACTIVE"}`);
+    }
+  }
+}
+
 // ------------------------------------------------------------- sign-in --
 
 function showLogin(error) {
@@ -2004,8 +2100,25 @@ function setup() {
     $("file").value = "";
   };
 
+  // Away after AWAY_AFTER_MS without input, back at the first touch.
+  const noteActivity = () => {
+    state.lastActivity = Date.now();
+    if (state.away) setAway(false);
+  };
+  for (const type of ["pointerdown", "keydown", "touchstart", "wheel"]) {
+    document.addEventListener(type, noteActivity, { passive: true });
+  }
+  let lastMove = 0;
+  document.addEventListener("mousemove", () => {
+    if (Date.now() - lastMove > 5000) { lastMove = Date.now(); noteActivity(); }
+  }, { passive: true });
+  setInterval(() => {
+    if (!state.away && Date.now() - state.lastActivity > AWAY_AFTER_MS) setAway(true);
+  }, 30 * 1000);
+
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;
+    noteActivity();
     // Phones suspend background pages; come back at once, and make sure a
     // connection that looks open still answers.
     if (!state.stopped && !state.socket) connect();

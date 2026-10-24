@@ -43,6 +43,10 @@ public:
   void setTranslationService(TranslationService *service);
   // Relays files up to this size; larger ones are refused. 0 allows none.
   void setMaximumFileSize(qint64 bytes);
+  // A sender stops being read while its receiver has more than `highWater`
+  // bytes waiting, and a receiver that falls `maximumPending` bytes behind
+  // loses the conversation. For tests.
+  void setRelayLimits(qint64 highWater, qint64 maximumPending);
 
 private:
   struct Client {
@@ -57,7 +61,11 @@ private:
     QByteArray nonce;
     QSet<QString> channels;
     bool web = false;
+    // CENTRAL_STATUS away: the user has not touched their client for a while.
+    bool away = false;
     QElapsedTimer lastActivity;
+    // Not read while this receiver catches up with what it sent.
+    CentralLink *waitingFor = nullptr;
   };
   struct Channel {
     CentralLink *opener;
@@ -82,6 +90,7 @@ private:
   void broadcast(const QByteArray &line, CentralLink *except);
   QByteArray peerLine(const Client &client) const;
   QByteArray kindLine(const Client &client) const;
+  QByteArray statusLine(const Client &client) const;
   CentralLink *findClient(const QString &id) const;
   QString describe(const Client &client) const;
   void log(const QString &message) const;
@@ -95,4 +104,7 @@ private:
   std::function<void(const QString &)> logger_;
   TranslationService *translation_ = nullptr;
   qint64 maximumFileSize_;
+  qint64 relayHighWater_;
+  qint64 maximumPending_;
+  void receiverDrained(CentralLink *receiver);
 };

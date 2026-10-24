@@ -8,8 +8,11 @@ TcpLink::TcpLink(QTcpSocket *socket, QObject *parent)
     : CentralLink(parent), socket_(socket) {
   socket_->setParent(this);
   socket_->setSocketOption(QAbstractSocket::KeepAliveOption, 1);
+  // Unread data stays in the kernel, so not reading slows the sender down.
+  socket_->setReadBufferSize(256 * 1024);
   connect(socket_, &QTcpSocket::readyRead, this, &CentralLink::readyRead);
   connect(socket_, &QTcpSocket::disconnected, this, &CentralLink::disconnected);
+  connect(socket_, &QTcpSocket::bytesWritten, this, &CentralLink::bytesWritten);
 }
 
 QByteArray TcpLink::readAll() { return socket_->readAll(); }

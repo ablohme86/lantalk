@@ -27,10 +27,14 @@ public:
   // Closes once pending output is written; disconnected() follows.
   virtual void close() = 0;
   virtual void abort() = 0;
+  // While off, the link takes in no more data, so TCP slows the sender
+  // down; lines already received can still be read.
+  virtual void setReading(bool reading) { Q_UNUSED(reading) }
 
 signals:
   void readyRead();
   void disconnected();
+  void bytesWritten();
 };
 
 class TcpLink final : public CentralLink {

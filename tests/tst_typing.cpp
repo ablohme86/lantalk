@@ -1,5 +1,7 @@
 #include "testsupport.h"
 
+#include "appconfig.h"
+
 #include <QRegularExpression>
 #include <QSignalSpy>
 
@@ -168,12 +170,47 @@ private slots:
     QVERIFY(!session->peerSupportsTyping());
   }
 
+  void awayIsSharedWithPeers() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    QTRY_COMPARE(bob.incoming().size(), 1);
+    auto *incoming = bob.incoming().first();
+    QTRY_VERIFY(session->isHandshakeComplete() && incoming->isHandshakeComplete());
+    QTest::qWait(100);
+    QVERIFY(!incoming->peerAway());
+
+    // This process is both peers, so both are away now; each tells the other.
+    ChatSession::setLocalAway(true);
+    QTRY_VERIFY(incoming->peerAway());
+    QTRY_VERIFY(session->peerAway());
+    // Someone connecting meanwhile learns it right away.
+    Peer carol(QStringLiteral("carol"));
+    auto *late = carol.connectTo(bob);
+    QTRY_VERIFY(late->isHandshakeComplete());
+    QTRY_VERIFY(late->peerAway());
+    ChatSession::setLocalAway(false);
+    QTRY_VERIFY(!incoming->peerAway());
+    QTRY_VERIFY(!late->peerAway());
+  }
+
+  void olderPeersOnlyGetFilesTheyAccept() {
+    Peer host(QStringLiteral("host"));
+    RawPeer raw(host.port());
+    // A LANTalk from before large files: TYPING, but no LARGEFILES.
+    auto *session = handshakeWithRaw(host, raw, true);
+    QVERIFY(session);
+    QCOMPARE(session->maximumFileSize(), LegacyMaximumFileSize);
+    raw.send(QStringLiteral("CAPABILITIES TYPING LARGEFILES"));
+    QTRY_COMPARE(session->maximumFileSize(), MaximumFileSize);
+  }
+
   void legacyPeersNeverReceiveTypingCommands() {
     Peer host(QStringLiteral("host"));
     RawPeer raw(host.port());
     auto *session = handshakeWithRaw(host, raw, false);
     QVERIFY(session);
-    QTRY_VERIFY(raw.lines().contains(QStringLiteral("CAPABILITIES TYPING")));
+    QTRY_VERIFY(raw.lines().contains(QStringLiteral("CAPABILITIES TYPING LARGEFILES PRESENCE")));
 
     session->noteLocalTyping(true);
     session->sendMessage(QStringLiteral("hello"));

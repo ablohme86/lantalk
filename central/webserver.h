@@ -65,6 +65,7 @@ public:
   bool isWeb() const override { return true; }
   void close() override;
   void abort() override;
+  void setReading(bool reading) override;
 
 private:
   void readFrames();
@@ -76,4 +77,5 @@ private:
   QByteArray message_;
   QByteArray lines_;
   bool closing_ = false;
+  bool reading_ = true;
 };

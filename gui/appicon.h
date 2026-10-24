@@ -3,5 +3,7 @@
 #include <QIcon>
 
 QIcon createAppIcon(int unreadCount = 0);
-// A green (online) or red (offline) dot, e.g. for a conversation tab.
-QIcon createStatusIcon(bool online);
+enum class Presence { Online, Away, Offline };
+// A green, yellow, or red dot, e.g. for a conversation tab.
+QColor presenceColor(Presence presence);
+QIcon createStatusIcon(Presence presence);

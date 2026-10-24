@@ -6,7 +6,10 @@
 
 inline constexpr quint16 DefaultPort = 45454;
 inline constexpr quint16 DiscoveryPort = 45456;
-inline constexpr qint64 MaximumFileSize = 50LL * 1024 * 1024;
+inline constexpr qint64 MaximumFileSize = 1024LL * 1024 * 1024;
+// What LANTalk accepted before 1.13, and still sends to peers that do not
+// advertise CAPABILITIES LARGEFILES.
+inline constexpr qint64 LegacyMaximumFileSize = 50LL * 1024 * 1024;
 inline constexpr auto DefaultOllamaUrl = "";
 inline constexpr auto DefaultOllamaModel = "";
 // A local user who stops editing a draft for this long is reported as no
@@ -16,6 +19,8 @@ inline constexpr int TypingInactivityTimeoutMs = 60 * 1000;
 // expire a stale indicator if TYPING STOP never arrives.
 inline constexpr int TypingRefreshIntervalMs = 15 * 1000;
 inline constexpr int TypingIndicatorTimeoutMs = 2 * TypingRefreshIntervalMs + 5 * 1000;
+// A user who has not touched LANTalk for this long shows as away.
+inline constexpr int AwayAfterMs = 10 * 60 * 1000;
 // Connections to the same peer that complete their handshakes within this
 // window are treated as a simultaneous-connect race and resolved
 // deterministically; otherwise the newer connection replaces the older one.

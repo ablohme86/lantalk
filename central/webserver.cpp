@@ -234,11 +234,14 @@ WebSocketLink::WebSocketLink(QTcpSocket *socket, const QByteArray &pending,
     : CentralLink(parent), socket_(socket), input_(pending) {
   socket_->setParent(this);
   socket_->setSocketOption(QAbstractSocket::KeepAliveOption, 1);
+  socket_->setReadBufferSize(256 * 1024);
   connect(socket_, &QTcpSocket::readyRead, this, [this] {
+    if (!reading_) return;
     input_.append(socket_->readAll());
     readFrames();
   });
   connect(socket_, &QTcpSocket::disconnected, this, &CentralLink::disconnected);
+  connect(socket_, &QTcpSocket::bytesWritten, this, &CentralLink::bytesWritten);
   if (!input_.isEmpty()) {
     QTimer::singleShot(0, this, &WebSocketLink::readFrames);
   }
@@ -366,3 +369,15 @@ void WebSocketLink::close() {
 }
 
 void WebSocketLink::abort() { socket_->abort(); }
+
+void WebSocketLink::setReading(bool reading) {
+  if (reading_ == reading) return;
+  reading_ = reading;
+  if (reading && socket_->bytesAvailable() > 0) {
+    QTimer::singleShot(0, this, [this] {
+      if (!reading_) return;
+      input_.append(socket_->readAll());
+      readFrames();
+    });
+  }
+}

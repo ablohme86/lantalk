@@ -12,7 +12,11 @@ notification (a toast on Windows, the desktop's notification service on
 Linux) with the sender and a short preview (translated, when Live Translate
 translates the message); clicking it opens that conversation. Turn it off under Settings → General → Notifications. The GUI remembers
 open chat tabs across restarts and retries disconnected peers every 10 seconds
-while their tab remains open.
+while their tab remains open; through a central host it instead reconnects
+as soon as the central host reports the peer online again.
+A dot on each conversation tab shows whether the peer is online (green),
+away for more than 10 minutes (yellow), or not connected (red); the Hosts
+sidebar shows the same green or yellow dot, and the TUI adds `(away)`.
 Connection tabs show each peer's IP address while connected and use
 `Nickname (Disconnected)` after the peer disconnects.
 Disconnected conversations reject new messages until the connection returns.
@@ -120,7 +124,9 @@ addresses from the host list. Clicking a host connects immediately, or
 switches to its tab if the conversation is open, and the host of the tab in
 front stays selected.
 
-Drop images or files into a conversation to send them to the connected host.
+Drop images or files of up to 1 GB into a conversation to send them to the
+connected host (at most 50 MB to LANTalk versions before 1.13, which accept
+no more).
 Image thumbnails appear in the chat log and open in an in-chat viewer when
 clicked. Received attachments are kept in LANTalk's operating-system cache
 until that conversation is closed. Use the `Save as...` link beside any
@@ -145,7 +151,10 @@ In central mode LANTalk:
   not on the network cards' subnets;
 - sends every conversation through the central host. Everything else works
   as before: tabs, history, reconnects, typing, quotes, files, and Live
-  Translate, which still translates locally with your own Ollama server.
+  Translate, which still translates locally with your own Ollama server;
+- reconnects a dropped conversation (GUI and TUI) the moment the central
+  host lists the peer again, for example after they or the central host
+  restarted, instead of retrying every 10 seconds.
 
 Leave the field empty to go back to direct LAN chat. Changing it moves open
 conversations to the new route at once. Conversations are identified by the
@@ -177,12 +186,15 @@ plain text.
 
 It logs sign-ins, sign-outs, and refused sign-ins, never message contents.
 
-`--max-file-size <MB>` limits the files `lantalkd` relays (default 50, the
-most LANTalk accepts; `0` relays none). Clients learn the limit when they
+`--max-file-size <MB>` limits the files `lantalkd` relays (default 1024,
+the most LANTalk accepts; `0` relays none). Clients learn the limit when they
 sign in and refuse larger files at once; `lantalkd` also stops larger
 transfers itself, so older clients cannot get around it (they will think
 the file went out, though). This is the one place where `lantalkd` looks at
-the relayed conversation, and only at `FILE_` lines.
+the relayed conversation, and only at `FILE_` lines. `lantalkd` also paces
+each conversation: while a receiver has more than a few megabytes waiting,
+it stops reading from the sender, so a large file moves at the receiver's
+speed without piling up on the server.
 
 ### Web client
 
@@ -192,7 +204,7 @@ the port; `--web-port 0` turns it off). People sign in with a nickname and
 the central host password and then appear to everyone else as an ordinary
 host. The page lists who is online, with search, unread counts, and typing
 indicators, and supports conversations with quotes, links, images, and
-files up to 50 MB. On a phone it shows one screen at a time; on a wider
+files up to 1 GB. On a phone it shows one screen at a time; on a wider
 screen the people list and the conversation sit side by side. It follows the
 browser's language (English, Norwegian, Simplified or Traditional Chinese,
 changeable on the sign-in page) and light or dark mode, and can be added to
@@ -293,7 +305,9 @@ followed by `CENTRAL_WELCOME <id> <address>`. After that the service reports
 `CENTRAL_OPEN <channel> <peer id>` opens a conversation (the peer gets
 `CENTRAL_INCOMING <channel> <id>` and the opener `CENTRAL_OPENED <channel>`).
 A web client is followed by `CENTRAL_PEER_KIND <id> web`, which older
-clients ignore. After the welcome, `CENTRAL_FILE_LIMIT <bytes>` gives the
+clients ignore. Clients report being away with `CENTRAL_STATUS away|active`,
+which the service passes on as `CENTRAL_PEER_STATUS <id> away|active`, so
+host lists can show who is away. After the welcome, `CENTRAL_FILE_LIMIT <bytes>` gives the
 file size limit, and a refused transfer is answered with
 `CENTRAL_FILE_REJECTED <channel> <file id> <bytes>`. `CENTRAL_OLLAMA`, `CENTRAL_OLLAMA_SCAN`, `CENTRAL_TRANSLATE`,
 `CENTRAL_TRANSLATED`, and `CENTRAL_TRANSLATE_FAILED` carry the web client's
@@ -308,7 +322,13 @@ address and nickname replaces the old one, which receives
 ## Protocol extensions
 
 LANCHAT PROTOCOL is line based. After receiving the peer's `NICKNAME`, current
-clients send `CAPABILITIES TYPING`; unknown capability tokens are ignored.
+clients send `CAPABILITIES TYPING LARGEFILES PRESENCE`; unknown capability
+tokens are ignored. `LARGEFILES` means the client accepts files up to 1 GB;
+peers without it are sent files of at most 50 MB. `PRESENCE` peers are sent
+`PRESENCE AWAY` when the user has not touched LANTalk (keyboard or mouse in
+the GUI, a key in the TUI, a touch or key on the web page) for 10 minutes,
+and `PRESENCE ACTIVE` at the next input; they show the peer with a yellow
+dot instead of a green one while away.
 Typing notifications are sent only to peers that advertised `TYPING`, so
 older clients never receive them (they report the `CAPABILITIES` line once as
 an unsupported command).

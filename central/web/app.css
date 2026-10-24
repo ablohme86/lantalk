@@ -276,6 +276,7 @@ body.in-chat .chat { display: flex; }
   border: 2px solid var(--surface);
 }
 .chat .avatar.online::after { border-color: var(--bar); }
+.avatar.away::after { background: #ffcc00; }
 
 .badge {
   min-width: 22px;

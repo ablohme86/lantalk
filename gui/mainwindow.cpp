@@ -50,6 +50,8 @@ namespace {
 
 // Where a sidebar host is: its address, or "Web".
 constexpr int HostSubtitleRole = Qt::UserRole + 1;
+// Whether a sidebar host is away (bool).
+constexpr int HostAwayRole = Qt::UserRole + 2;
 
 // A sidebar host: the nickname, and below it in a smaller, muted font
 // where the host is.
@@ -65,8 +67,18 @@ public:
     option.widget->style()->drawControl(QStyle::CE_ItemViewItem, &background,
                                         painter, option.widget);
     const bool selected = option.state.testFlag(QStyle::State_Selected);
-    const auto area = option.rect.adjusted(10, 5, -8, -5);
     painter->save();
+    // A green or yellow dot before the name; listed hosts are online.
+    painter->setRenderHint(QPainter::Antialiasing);
+    painter->setPen(QPen(QColor(0, 0, 0, 60), 1));
+    painter->setBrush(presenceColor(index.data(HostAwayRole).toBool()
+                                        ? Presence::Away
+                                        : Presence::Online));
+    const QFontMetrics dotMetrics(option.font);
+    painter->drawEllipse(QRectF(option.rect.left() + 10,
+                                option.rect.top() + 5 + dotMetrics.height() / 2.0 - 4.5,
+                                9, 9));
+    const auto area = option.rect.adjusted(27, 5, -8, -5);
     painter->setPen(option.palette.color(
         selected ? QPalette::HighlightedText : QPalette::Text));
     painter->setFont(option.font);
@@ -165,6 +177,13 @@ MainWindow::MainWindow() {
   connect(fontSizeAction, &QAction::triggered, this,
           &MainWindow::showFontSizeDialog);
   setupTrayIcon();
+  lastActivity_.start();
+  qApp->installEventFilter(this);
+  awayTimer_.setInterval(30 * 1000);
+  connect(&awayTimer_, &QTimer::timeout, this, [this] {
+    if (!away_ && lastActivity_.elapsed() > AwayAfterMs) setAway(true);
+  });
+  awayTimer_.start();
 #ifdef LANTALK_HAVE_MULTIMEDIA
   messageSound_ = new QSoundEffect(this);
   messageSound_->setSource(QUrl(QStringLiteral("qrc:/sounds/message.wav")));
@@ -196,6 +215,13 @@ MainWindow::MainWindow() {
           &MainWindow::acceptRelayConnection);
   connect(&central_, &CentralClient::peersChanged, this,
           &MainWindow::refreshHostList);
+  connect(&central_, &CentralClient::peersChanged, this,
+          &MainWindow::reconnectArrivedPeers);
+  connect(&central_, &CentralClient::peersChanged, this, [this] {
+    for (int index = 0; index < tabs_->count(); ++index) {
+      if (auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index))) updateTabStatus(tab);
+    }
+  });
   connect(&central_, &CentralClient::stateChanged, this,
           &MainWindow::updateCentralStatus);
   connect(&central_, &CentralClient::translationAvailabilityChanged, this,
@@ -233,6 +259,31 @@ void MainWindow::showSettings() {
 MainWindow::~MainWindow() {
   ChatTransport::setFactory({});
   MessageTranslator::setRemote({});
+}
+
+void MainWindow::reconnectArrivedPeers() {
+  // Peers that just appeared, e.g. after they or the central host came back.
+  QSet<QString> present;
+  QList<CentralClient::Peer> arrived;
+  for (const auto &peer : central_.peers()) {
+    const auto key = ConversationIdentity::normalizedAddress(peer.address) +
+                     u'\n' + ConversationIdentity::normalizedNickname(peer.nickname);
+    present.insert(key);
+    if (!centralPeersSeen_.contains(key)) arrived.append(peer);
+  }
+  centralPeersSeen_ = present;
+  for (const auto &peer : std::as_const(arrived)) {
+    for (int index = 0; index < tabs_->count(); ++index) {
+      auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index));
+      if (!tab || tab->isConnected() ||
+          !ConversationIdentity::sameAddress(peer.address, tab->reconnectAddress()) ||
+          (!tab->peerNickname().isEmpty() &&
+           !ConversationIdentity::sameNickname(peer.nickname, tab->peerNickname()))) {
+        continue;
+      }
+      tab->reconnectNow();
+    }
+  }
 }
 
 void MainWindow::updateCentralTranslation() {
@@ -287,6 +338,11 @@ void MainWindow::applyNetworkMode() {
     updateCentralStatus();
   }
   refreshHostList();
+  for (int index = 0; index < tabs_->count(); ++index) {
+    if (auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index))) {
+      tab->setReconnectOnPresence(central_.isActive());
+    }
+  }
   const bool modeChanged = networkModeApplied_ && modeKey != networkModeKey_;
   networkModeKey_ = modeKey;
   networkModeApplied_ = true;
@@ -384,6 +440,28 @@ void MainWindow::updateTrayIcon() {
 
 void MainWindow::showFromTray() {
   activateFromAnotherLaunch();
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+  switch (event->type()) {
+  case QEvent::KeyPress:
+  case QEvent::MouseButtonPress:
+  case QEvent::MouseMove:
+  case QEvent::Wheel:
+  case QEvent::TouchBegin:
+    lastActivity_.restart();
+    if (away_) setAway(false);
+    break;
+  default:
+    break;
+  }
+  return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::setAway(bool away) {
+  away_ = away;
+  ChatSession::setLocalAway(away);
+  central_.setAway(away);
 }
 
 bool MainWindow::event(QEvent *event) {
@@ -794,7 +872,13 @@ void MainWindow::refreshHostList() {
     endpoint.insert(QStringLiteral("port"), host.port);
     endpoint.insert(QStringLiteral("nickname"), host.nickname);
     auto *item = new QListWidgetItem(host.nickname, hosts_);
-    item->setData(HostSubtitleRole, web ? tr("Web") : address);
+    const bool away = central_.isActive()
+                          ? centralPeerAway(address, host.nickname)
+                          : lanPeerAway(address, host.nickname);
+    item->setData(HostSubtitleRole,
+                  away ? QStringLiteral("%1 · %2").arg(web ? tr("Web") : address, tr("Away"))
+                       : (web ? tr("Web") : address));
+    item->setData(HostAwayRole, away);
     item->setData(Qt::UserRole, endpoint);
     item->setToolTip(web ? tr("%1 (Web)").arg(host.nickname)
                          : QStringLiteral("%1 (%2)").arg(host.nickname, address));
@@ -838,6 +922,11 @@ ChatTab *MainWindow::createTab(ChatSession *session,
   session->setParent(tab);
   tab->setReconnectEndpoint(reconnectAddress, reconnectPort);
   tab->setOllamaDiscovery(&ollamaDiscovery_);
+  tab->setReconnectOnPresence(central_.isActive());
+  connect(session, &ChatSession::peerAwayChanged, this, [this, tab] {
+    updateTabStatus(tab);
+    refreshHostList();
+  });
   connect(session, &ChatSession::mergedInto, this,
           [this, tab](ChatSession *existing) {
             const bool wasCurrent = tabs_->currentWidget() == tab;
@@ -883,9 +972,47 @@ void MainWindow::showTab(ChatTab *tab, const QString &title) {
 void MainWindow::updateTabStatus(ChatTab *tab) {
   const int index = tabs_->indexOf(tab);
   if (index < 0) return;
-  const bool online = tab->isConnected();
-  tabs_->setTabIcon(index, createStatusIcon(online));
-  tabs_->setTabToolTip(index, online ? tr("Online") : tr("Offline"));
+  const auto presence = presenceOf(tab);
+  tabs_->setTabIcon(index, createStatusIcon(presence));
+  tabs_->setTabToolTip(index, presence == Presence::Online ? tr("Online")
+                              : presence == Presence::Away ? tr("Away")
+                                                           : tr("Offline"));
+}
+
+Presence MainWindow::presenceOf(ChatTab *tab) const {
+  if (!tab->isConnected()) return Presence::Offline;
+  // The peer says so itself, or the central host does for peers whose
+  // LANTalk predates PRESENCE.
+  return tab->session()->peerAway() ||
+                 centralPeerAway(tab->reconnectAddress(), tab->peerNickname())
+             ? Presence::Away
+             : Presence::Online;
+}
+
+bool MainWindow::lanPeerAway(const QString &address,
+                             const QString &nickname) const {
+  // On the LAN only an open conversation tells.
+  for (int index = 0; index < tabs_->count(); ++index) {
+    auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index));
+    if (tab && tab->isConnected() && tab->session()->peerAway() &&
+        ConversationIdentity::sameAddress(tab->reconnectAddress(), address) &&
+        ConversationIdentity::sameNickname(tab->peerNickname(), nickname)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool MainWindow::centralPeerAway(const QString &address,
+                                 const QString &nickname) const {
+  if (!central_.isActive()) return false;
+  for (const auto &peer : central_.peers()) {
+    if (ConversationIdentity::sameAddress(peer.address, address) &&
+        ConversationIdentity::sameNickname(peer.nickname, nickname)) {
+      return peer.away;
+    }
+  }
+  return false;
 }
 
 ChatTab *MainWindow::tabForSession(ChatSession *session) const {

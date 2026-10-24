@@ -75,7 +75,16 @@ QIcon createAppIcon(int unreadCount) {
   return icon;
 }
 
-QIcon createStatusIcon(bool online) {
+QColor presenceColor(Presence presence) {
+  switch (presence) {
+  case Presence::Online: return QColor(QStringLiteral("#34c759"));
+  case Presence::Away: return QColor(QStringLiteral("#ffcc00"));
+  case Presence::Offline: break;
+  }
+  return QColor(QStringLiteral("#ff3b30"));
+}
+
+QIcon createStatusIcon(Presence presence) {
   QIcon icon;
   for (const int size : {12, 16, 24, 32}) {
     QPixmap pixmap(size, size);
@@ -84,8 +93,7 @@ QIcon createStatusIcon(bool online) {
     painter.setRenderHint(QPainter::Antialiasing);
     painter.scale(size / 16.0, size / 16.0);
     painter.setPen(QPen(QColor(0, 0, 0, 60), 1));
-    painter.setBrush(QColor(online ? QStringLiteral("#34c759")
-                                   : QStringLiteral("#ff3b30")));
+    painter.setBrush(presenceColor(presence));
     painter.drawEllipse(QRectF(3.5, 3.5, 9, 9));
     icon.addPixmap(pixmap);
   }

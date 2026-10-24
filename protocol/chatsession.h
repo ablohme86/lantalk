@@ -9,6 +9,8 @@
 #include <QStringList>
 #include <QTimer>
 
+#include <memory>
+
 class ChatTransport;
 class ConnectionRegistry;
 class QFile;
@@ -52,6 +54,11 @@ public:
   void noteLocalTyping(bool hasDraft);
   void stopLocalTyping();
   bool peerTyping() const;
+  // Whether this user is away, for every session (PRESENCE AWAY/ACTIVE to
+  // peers that advertise CAPABILITIES PRESENCE).
+  static void setLocalAway(bool away);
+  static bool localAway();
+  bool peerAway() const;
   bool peerSupportsTyping() const;
   void setTypingTimeouts(int inactivityMs, int refreshMs, int expiryMs);
   QString peerName() const;
@@ -87,6 +94,7 @@ signals:
   void peerLiveTranslationChanged(bool active, const QString &sourceLanguage,
                                   const QString &targetLanguage);
   void peerTypingChanged(bool typing);
+  void peerAwayChanged(bool away);
   void statusChanged(const QString &status);
   void disconnected();
   // This session duplicated `existing` and has been retired: its connection
@@ -110,19 +118,25 @@ private:
   void setupSocket();
   void resetConnectionState();
   void setPeerTyping(bool typing);
+  void setPeerAway(bool away);
+  void sendPresence();
   void resetTypingState();
   QString connectionKey() const;
   qint64 handshakeAgeMs() const;
   void adoptConnection(ChatSession *duplicate);
   void retireAsDuplicate(ChatSession *existing);
 
+  // Written straight to its file in the cache folder, so a large file
+  // never sits in memory.
   struct IncomingFile {
     QString name;
     QString mimeType;
     qint64 size;
-    QByteArray data;
+    std::shared_ptr<QFile> file;
+    qint64 received = 0;
     int percent = 0;
   };
+  void discardIncomingFile(const QString &id, const QString &reason);
 
   ConnectionRegistry *registry_;
   ChatTransport *transport_;
@@ -156,6 +170,11 @@ private:
   int outgoingFilePercent_ = -1;
   bool disconnectNotified_ = false;
   bool peerSupportsTyping_ = false;
+  // The peer takes files up to MaximumFileSize, not just
+  // LegacyMaximumFileSize (CAPABILITIES LARGEFILES).
+  bool peerSupportsLargeFiles_ = false;
+  bool peerSupportsPresence_ = false;
+  bool peerAway_ = false;
   bool localTyping_ = false;
   bool peerTyping_ = false;
   QTimer localTypingIdleTimer_;

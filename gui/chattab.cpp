@@ -291,8 +291,10 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       translateButton_->setChecked(false);
     }
     setPeerTranslating(false);
-    status_->setText(reconnectAddress_.isEmpty()
-                         ? tr("Disconnected")
+    const auto peer = lastPeerName_.isEmpty() ? reconnectAddress_ : lastPeerName_;
+    status_->setText(reconnectAddress_.isEmpty() ? tr("Disconnected")
+                     : reconnectOnPresence_
+                         ? tr("Disconnected; reconnects when %1 comes online").arg(peer)
                          : tr("Disconnected; retrying in 10 seconds"));
     input_->setText(
         tr("Re-connect to this host to start chatting"));
@@ -301,8 +303,8 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     inputFont.setItalic(true);
     input_->setFont(inputFont);
     input_->setEnabled(false);
-    if (!reconnectAddress_.isEmpty() && reconnectPort_ != 0 &&
-        !reconnectTimer_->isActive()) {
+    if (!reconnectOnPresence_ && !reconnectAddress_.isEmpty() &&
+        reconnectPort_ != 0 && !reconnectTimer_->isActive()) {
       reconnectTimer_->start();
     }
   });
@@ -366,9 +368,22 @@ void ChatTab::restartConnection() {
 }
 
 void ChatTab::reconnectNow() {
-  if (connected_ || !reconnectTimer_->isActive()) return;
+  if (connected_ || (!reconnectTimer_->isActive() && !reconnectOnPresence_)) {
+    return;
+  }
   reconnectTimer_->stop();
   retryConnection();
+}
+
+void ChatTab::setReconnectOnPresence(bool enabled) {
+  if (reconnectOnPresence_ == enabled) return;
+  reconnectOnPresence_ = enabled;
+  if (enabled) {
+    reconnectTimer_->stop();
+  } else if (!connected_ && hasPeerIdentity_ && !reconnectAddress_.isEmpty() &&
+             reconnectPort_ != 0) {
+    reconnectTimer_->start();
+  }
 }
 
 void ChatTab::closeConversation() {

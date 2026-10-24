@@ -7,6 +7,7 @@
 #include "protocol/peerdiscovery.h"
 #include "protocol/chatsession.h"
 #include "protocol/connectionregistry.h"
+#include "protocol/conversationidentity.h"
 #include "protocol/quotedmessage.h"
 #include "messagetranslator.h"
 #include "translationrestorer.h"
@@ -142,6 +143,7 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
     connect(&server_, &QTcpServer::newConnection, this, &TerminalUi::acceptConnection);
     connect(&central_, &CentralClient::incomingConnection, this, &TerminalUi::acceptRelayConnection);
     connect(&central_, &CentralClient::peersChanged, this, [this] {
+        reconnectArrivedPeers();
         if (ansi_) redraw();
     });
     connect(&central_, &CentralClient::stateChanged, this, &TerminalUi::reportCentralState);
@@ -164,6 +166,15 @@ TerminalUi::TerminalUi(QObject *parent) : QObject(parent)
 
     resizeTimer_.setInterval(500);
     connect(&resizeTimer_, &QTimer::timeout, this, &TerminalUi::redrawIfResized);
+    lastActivity_.start();
+    awayTimer_.setInterval(30 * 1000);
+    connect(&awayTimer_, &QTimer::timeout, this, [this] {
+        if (!ChatSession::localAway() && lastActivity_.elapsed() > AwayAfterMs) {
+            ChatSession::setLocalAway(true);
+            central_.setAway(true);
+        }
+    });
+    awayTimer_.start();
     resizeTimer_.start();
     escapeTimer_.setSingleShot(true);
     escapeTimer_.setInterval(35);
@@ -177,6 +188,43 @@ TerminalUi::~TerminalUi()
     ChatTransport::setFactory({});
     MessageTranslator::setRemote({});
     restoreTerminal();
+}
+
+QString TerminalUi::disconnectedHint() const
+{
+    if (!central_.isActive() || currentConversation_ < 0 || currentConversation_ >= conversations_.size()) {
+        return ReconnectHint;
+    }
+    const auto *session = conversations_.at(currentConversation_).session;
+    return QStringLiteral("Disconnected; reconnects when %1 comes online.")
+        .arg(session->identityName().isEmpty() ? session->peerAddress() : session->identityName());
+}
+
+void TerminalUi::reconnectArrivedPeers()
+{
+    // Peers that just appeared, e.g. after they or the central host came back.
+    QSet<QString> present;
+    QList<CentralClient::Peer> arrived;
+    for (const auto &peer : central_.peers()) {
+        const auto key = ConversationIdentity::normalizedAddress(peer.address) + u'\n'
+                         + ConversationIdentity::normalizedNickname(peer.nickname);
+        present.insert(key);
+        if (!centralPeersSeen_.contains(key)) arrived.append(peer);
+    }
+    centralPeersSeen_ = present;
+    for (const auto &peer : std::as_const(arrived)) {
+        for (const auto &conversation : std::as_const(conversations_)) {
+            auto *session = conversation.session;
+            if (!conversation.disconnected
+                || !ConversationIdentity::sameAddress(peer.address, session->peerAddress())
+                || (!session->identityName().isEmpty()
+                    && !ConversationIdentity::sameNickname(peer.nickname, session->identityName()))) {
+                continue;
+            }
+            const auto address = session->remoteHost().isEmpty() ? session->peerAddress() : session->remoteHost();
+            session->reconnectToHost(address, session->remotePort() ? session->remotePort() : DefaultPort);
+        }
+    }
 }
 
 void TerminalUi::updateCentralTranslation()
@@ -446,8 +494,18 @@ void TerminalUi::sendDiscoveryProbeBatch()
     if (pendingDiscoveryProbes_.isEmpty()) probeSendTimer_.stop();
 }
 
+void TerminalUi::noteActivity()
+{
+    lastActivity_.restart();
+    if (ChatSession::localAway()) {
+        ChatSession::setLocalAway(false);
+        central_.setAway(false);
+    }
+}
+
 void TerminalUi::handleInput()
 {
+    noteActivity();
 #ifdef Q_OS_UNIX
     if (!ansi_) {
         const QString line = terminalInput.readLine();
@@ -460,7 +518,7 @@ void TerminalUi::handleInput()
             handleCommand(text);
         } else if (!text.isEmpty()) {
             if (currentConversationDisconnected()) {
-                setStatus(ReconnectHint);
+                setStatus(disconnectedHint());
             } else {
                 sendChatMessage(text);
             }
@@ -603,7 +661,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                                    % conversations_.size();
             selectedConversation_ = currentConversation_;
             conversations_[currentConversation_].unread = false;
-            if (currentConversationDisconnected()) status_ = ReconnectHint;
+            if (currentConversationDisconnected()) status_ = disconnectedHint();
         }
     } else if (key == "\x1b[C" || key == "\x1b[D") {
         if (focus_ == Focus::Menu) {
@@ -628,7 +686,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                                    % conversations_.size();
             selectedConversation_ = currentConversation_;
             conversations_[currentConversation_].unread = false;
-            if (currentConversationDisconnected()) status_ = ReconnectHint;
+            if (currentConversationDisconnected()) status_ = disconnectedHint();
         }
     } else if (key == "\r" || key == "\n") {
         if (focus_ == Focus::Hosts) {
@@ -644,7 +702,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                 selectedConversation_ < conversations_.size()) {
                 currentConversation_ = selectedConversation_;
                 conversations_[currentConversation_].unread = false;
-                if (currentConversationDisconnected()) status_ = ReconnectHint;
+                if (currentConversationDisconnected()) status_ = disconnectedHint();
                 focus_ = Focus::Chat;
                 status_ = QStringLiteral("Active tab: %1")
                               .arg(conversationTitle(
@@ -663,7 +721,7 @@ void TerminalUi::handleKey(const QByteArray &key)
                 handleCommand(text);
             } else if (hasMessage && currentConversationDisconnected()) {
                 // Keep the draft; commands such as /connect still work.
-                status_ = ReconnectHint;
+                status_ = disconnectedHint();
             } else if (hasMessage && currentConversation_ >= 0
                        && currentConversation_ < conversations_.size()) {
                 const auto message = composeDraft(text);
@@ -748,7 +806,7 @@ void TerminalUi::handleCommand(const QString &command)
         currentConversation_ = index;
         selectedConversation_ = index;
         conversations_[index].unread = false;
-        if (currentConversationDisconnected()) status_ = ReconnectHint;
+        if (currentConversationDisconnected()) status_ = disconnectedHint();
         focus_ = Focus::Chat;
         print(QStringLiteral("Active tab: %1").arg(conversationTitle(conversations_.at(index))));
     } else if (name == QStringLiteral("/close")) {
@@ -1109,6 +1167,7 @@ void TerminalUi::addSession(ChatSession *session, const QString &title)
     connect(session, &ChatSession::mergedInto, this,
             [this, session](ChatSession *existing) { mergeConversation(session, existing); });
     connect(session, &ChatSession::peerTypingChanged, this, [this] { redraw(); });
+    connect(session, &ChatSession::peerAwayChanged, this, [this] { redraw(); });
     connect(conversation.translation, &TranslationRestorer::resumeRequested, this,
             [this, session](const QString &myLanguage, const QString &peerLanguage) {
                 const int index = conversationIndex(session);
@@ -1230,6 +1289,13 @@ void TerminalUi::addSession(ChatSession *session, const QString &title)
             conversations_[index].liveTranslate = false;
             appendTranscript(index, QStringLiteral("* Disconnected."));
         }
+        // Through a central host the conversation comes back by itself.
+        if (central_.isActive()) {
+            setStatus(QStringLiteral("Disconnected; reconnects when %1 comes online.")
+                          .arg(session->identityName().isEmpty() ? session->peerAddress()
+                                                                 : session->identityName()));
+            return;
+        }
         setStatus(index >= 0 && index == currentConversation_
                       ? QStringLiteral("Disconnected. %1.").arg(ReconnectHint)
                       : QStringLiteral("Disconnected."));
@@ -1340,7 +1406,7 @@ void TerminalUi::closeConversation(int index)
     selectedConversation_ = currentConversation_;
     if (currentConversation_ >= 0)
         conversations_[currentConversation_].unread = false;
-    if (currentConversationDisconnected()) status_ = ReconnectHint;
+    if (currentConversationDisconnected()) status_ = disconnectedHint();
     syncLocalTyping();
     print(QStringLiteral("Closed tab %1.").arg(index + 1));
 }
@@ -1446,7 +1512,7 @@ QList<TerminalUi::DiscoveredHost> TerminalUi::sortedHosts() const
         hosts.clear();
         for (const auto &peer : central_.peers()) {
             hosts.append({peer.nickname, QHostAddress(peer.address), peer.port, QDateTime::currentDateTimeUtc(),
-                          peer.web});
+                          peer.web, peer.away});
         }
     }
     std::sort(hosts.begin(), hosts.end(), [](const DiscoveredHost &a, const DiscoveredHost &b) {
@@ -1639,7 +1705,8 @@ void TerminalUi::redraw()
         else if (row - 1 < hosts.size()) {
             const auto &host = hosts.at(row - 1);
             left = QStringLiteral("│%1 %2").arg(row - 1 == selectedHost_ ? u'>' : u' ')
-                       .arg(host.web ? QStringLiteral("%1 (Web)").arg(host.nickname) : host.nickname);
+                       .arg((host.web ? QStringLiteral("%1 (Web)").arg(host.nickname) : host.nickname)
+                            + (host.away ? QStringLiteral(" (away)") : QString()));
         } else if (row == hosts.size() + 1 && hosts.isEmpty()) {
             left = central_.isActive() && !central_.isReady() ? QStringLiteral("│ (connecting...)")
                                                               : QStringLiteral("│ (discovering...)");
@@ -1827,7 +1894,8 @@ void TerminalUi::printHosts() const
     for (int i = 0; i < hosts.size(); ++i) {
         lines << (hosts[i].web
                       ? QStringLiteral("  %1. %2 (Web)").arg(i + 1).arg(hosts[i].nickname)
-                      : QStringLiteral("  %1. %2 (%3:%4)").arg(i + 1).arg(hosts[i].nickname, hosts[i].address.toString()).arg(hosts[i].port));
+                      : QStringLiteral("  %1. %2 (%3:%4)").arg(i + 1).arg(hosts[i].nickname, hosts[i].address.toString()).arg(hosts[i].port))
+                 + (hosts[i].away ? QStringLiteral(" (away)") : QString());
     }
     print(hosts.isEmpty() ? QStringLiteral("No LANTalk hosts found.") : lines.join(u'\n'));
 }
@@ -1856,7 +1924,8 @@ QString TerminalUi::conversationTitle(const Conversation &conversation) const
                                   : (address.isEmpty()
                                          ? peer
                                          : QStringLiteral("%1 (%2)").arg(peer, address));
-    return conversation.disconnected && !peer.isEmpty()
-               ? QStringLiteral("%1 (Disconnected)").arg(peer)
-               : title;
+    if (conversation.disconnected && !peer.isEmpty()) {
+        return QStringLiteral("%1 (Disconnected)").arg(peer);
+    }
+    return conversation.session->peerAway() ? title + QStringLiteral(" (away)") : title;
 }

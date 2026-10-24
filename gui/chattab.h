@@ -46,6 +46,9 @@ public:
   QString peerNickname() const;
   // Retries a disconnected conversation now instead of waiting for the timer.
   void reconnectNow();
+  // Through a central host, a dropped conversation waits for the peer to
+  // come online (reconnectNow()) instead of retrying every 10 seconds.
+  void setReconnectOnPresence(bool enabled);
   // Drops the current connection, if any, and connects again, e.g. after the
   // network mode (LAN or central host) changed.
   void restartConnection();
@@ -128,6 +131,7 @@ private:
   ChatInput *input_;
   QPushButton *translateButton_;
   QTimer *reconnectTimer_;
+  bool reconnectOnPresence_ = false;
   QString reconnectAddress_;
   QString lastPeerName_;
   quint16 reconnectPort_ = 0;

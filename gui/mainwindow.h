@@ -1,5 +1,6 @@
 #pragma once
 
+#include "gui/appicon.h"
 #include "ollamadiscovery.h"
 #include "protocol/centralclient.h"
 
@@ -10,6 +11,7 @@
 #include <QMainWindow>
 #include <QPointer>
 #include <QQueue>
+#include <QSet>
 #include <QString>
 #include <QTcpServer>
 #include <QTimer>
@@ -38,6 +40,8 @@ public:
 
 protected:
   bool event(QEvent *event) override;
+  // Any input to LANTalk counts as activity (see AwayAfterMs).
+  bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
   void showSettings();
@@ -48,6 +52,11 @@ private slots:
   void selectHostForTab(ChatTab *tab);
   // The green or red dot on a conversation tab.
   void updateTabStatus(ChatTab *tab);
+  Presence presenceOf(ChatTab *tab) const;
+  // Whether the central host reports this host away.
+  bool centralPeerAway(const QString &address, const QString &nickname) const;
+  bool lanPeerAway(const QString &address, const QString &nickname) const;
+  void setAway(bool away);
   void showConnectDialog();
   void acceptConnection();
 
@@ -61,6 +70,8 @@ private:
   // configured, leaves both to the central host.
   void applyNetworkMode();
   void updateCentralTranslation();
+  // Reconnects dropped conversations with peers the central host now lists.
+  void reconnectArrivedPeers();
   void startDiscovery();
   void stopDiscovery();
   void acceptRelayConnection(RelayTransport *transport);
@@ -114,6 +125,10 @@ private:
       QUuid::createUuid().toString(QUuid::WithoutBraces);
   QHash<QString, DiscoveredHost> discoveredHosts_;
   // The sidebar of available hosts, as in the TUI and the web client.
+  QSet<QString> centralPeersSeen_;
+  QElapsedTimer lastActivity_;
+  QTimer awayTimer_;
+  bool away_ = false;
   QSplitter *splitter_;
   QListWidget *hosts_;
   QLabel *hostListStatus_;

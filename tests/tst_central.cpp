@@ -259,6 +259,108 @@ private slots:
     QVERIFY(error.contains(QStringLiteral("cannot translate")));
   }
 
+  void slowReceiversSlowSendersDown() {
+    CentralServer server;
+    // Without flow control, 1 MB waiting would cost the conversation.
+    server.setRelayLimits(64 * 1024, 1024 * 1024);
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    RawPeer sender(server.serverPort());
+    QTcpSocket receiver;
+    receiver.setReadBufferSize(64 * 1024);
+    receiver.connectToHost(QHostAddress::LocalHost, server.serverPort());
+    QVERIFY(receiver.waitForConnected(3000));
+    QByteArray received;
+    const auto readReceiver = [&] {
+      received += receiver.readAll();
+    };
+    const auto signIn = [&](const QString &name, const std::function<void(const QByteArray &)> &send) {
+      send("CENTRAL_HELLO 1 " + CentralProtocol::encodeField(name) + " 45454 -");
+    };
+    QTRY_VERIFY(!sender.lines().isEmpty());
+    signIn(QStringLiteral("sender"), [&](const QByteArray &line) { sender.send(QString::fromUtf8(line)); });
+    QTRY_VERIFY(receiver.waitForReadyRead(100) || receiver.bytesAvailable() > 0);
+    readReceiver();
+    receiver.write("CENTRAL_HELLO 1 " + CentralProtocol::encodeField(QStringLiteral("receiver")) +
+                   " 45454 -\n");
+    QTRY_VERIFY([&] { readReceiver(); return received.contains("CENTRAL_WELCOME"); }());
+    QTRY_VERIFY(sender.lines().join(u'\n').contains(QStringLiteral("CENTRAL_PEER ")));
+    QString receiverId;
+    for (const auto &line : sender.lines()) {
+      if (line.startsWith(QStringLiteral("CENTRAL_PEER "))) receiverId = line.section(u' ', 1, 1);
+    }
+    sender.send(QStringLiteral("CENTRAL_OPEN flow-1 %1").arg(receiverId));
+    QTRY_VERIFY(sender.lines().contains(QStringLiteral("CENTRAL_OPENED flow-1")));
+
+    // 24 MB while the receiver reads nothing: far more than the kernel and
+    // 1 MB of pending output hold, so lantalkd must hold the sender back.
+    const QString payload(16 * 1024, u'x');
+    for (int index = 0; index < 1536; ++index) {
+      sender.send(QStringLiteral("CENTRAL_DATA flow-1 L%1 %2").arg(index).arg(payload));
+    }
+    QTest::qWait(1500);
+    QCOMPARE(server.channelCount(), 1);
+
+    // Reading now brings every line, in order.
+    int lines = 0;
+    QElapsedTimer timer;
+    timer.start();
+    while (lines < 1536 && timer.elapsed() < 30000) {
+      QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
+      readReceiver();
+      int newline;
+      while ((newline = received.indexOf('\n')) >= 0) {
+        const auto line = received.left(newline);
+        received.remove(0, newline + 1);
+        if (line.startsWith("CENTRAL_DATA flow-1 L")) {
+          QCOMPARE(line.split(' ').value(2), QByteArray("L") + QByteArray::number(lines));
+          ++lines;
+        }
+      }
+    }
+    QCOMPARE(lines, 1536);
+    QCOMPARE(server.channelCount(), 1);
+  }
+
+  void awayStatusReachesEveryone() {
+    CentralServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    CentralPeer alice(QStringLiteral("alice"), server.serverPort());
+    CentralPeer bob(QStringLiteral("bob"), server.serverPort());
+    QTRY_VERIFY(hasPeer(bob.client(), QStringLiteral("alice")));
+    const auto aliceAway = [](CentralClient &client) {
+      for (const auto &peer : client.peers()) {
+        if (peer.nickname == QStringLiteral("alice")) return peer.away;
+      }
+      return false;
+    };
+    alice.client().setAway(true);
+    QTRY_VERIFY(aliceAway(bob.client()));
+    // Someone signing in later is told too.
+    CentralPeer carol(QStringLiteral("carol"), server.serverPort());
+    QTRY_VERIFY(hasPeer(carol.client(), QStringLiteral("alice")));
+    QTRY_VERIFY(aliceAway(carol.client()));
+    alice.client().setAway(false);
+    QTRY_VERIFY(!aliceAway(bob.client()));
+    QTRY_VERIFY(!aliceAway(carol.client()));
+  }
+
+  void peerReturningIsAnnounced() {
+    // What LANTalk reconnects on instead of retrying every 10 seconds.
+    CentralServer server;
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    CentralPeer alice(QStringLiteral("alice"), server.serverPort());
+    QSignalSpy changes(&alice.client(), &CentralClient::peersChanged);
+    {
+      CentralPeer bob(QStringLiteral("bob"), server.serverPort());
+      QTRY_VERIFY(hasPeer(alice.client(), QStringLiteral("bob")));
+    }
+    QTRY_VERIFY(!hasPeer(alice.client(), QStringLiteral("bob")));
+    changes.clear();
+    CentralPeer bobAgain(QStringLiteral("bob"), server.serverPort());
+    QTRY_VERIFY(hasPeer(alice.client(), QStringLiteral("bob")));
+    QVERIFY(!changes.isEmpty());
+  }
+
   void conversationEndsWhenThePeerLeaves() {
     CentralServer server;
     QVERIFY(server.listen(QHostAddress::LocalHost, 0));

@@ -12,9 +12,12 @@
 
 namespace {
 
-// A relayed file is at most 50 MB (about 67 MB in base64); a receiver this
-// far behind is not keeping up and its conversation is dropped.
-constexpr qint64 MaximumPendingBytes = 128LL * 1024 * 1024;
+// While a receiver has this much waiting, its senders are not read, so TCP
+// slows them down to the receiver's pace instead of lantalkd buffering a
+// whole file.
+constexpr qint64 RelayHighWater = 4LL * 1024 * 1024;
+// A receiver this far behind despite that is dropped from the conversation.
+constexpr qint64 MaximumPendingBytes = 64LL * 1024 * 1024;
 // Clients must register this soon after connecting.
 constexpr qint64 RegistrationTimeoutMs = 15 * 1000;
 constexpr qsizetype MaximumNicknameLength = 256;
@@ -32,7 +35,8 @@ QByteArray createNonce() {
 
 CentralServer::CentralServer(QObject *parent)
     : QObject(parent), idleTimeoutMs_(CentralProtocol::IdleTimeoutMs),
-      maximumFileSize_(MaximumFileSize) {
+      maximumFileSize_(MaximumFileSize), relayHighWater_(RelayHighWater),
+      maximumPending_(MaximumPendingBytes) {
   connect(&server_, &QTcpServer::newConnection, this,
           &CentralServer::acceptClients);
   sweepTimer_.setInterval(5 * 1000);
@@ -83,6 +87,23 @@ void CentralServer::setMaximumFileSize(qint64 bytes) {
   maximumFileSize_ = bytes;
 }
 
+void CentralServer::setRelayLimits(qint64 highWater, qint64 maximumPending) {
+  relayHighWater_ = highWater;
+  maximumPending_ = maximumPending;
+}
+
+void CentralServer::receiverDrained(CentralLink *receiver) {
+  if (receiver->bytesToWrite() > relayHighWater_ / 4) return;
+  for (auto client = clients_.begin(); client != clients_.end(); ++client) {
+    if (client->waitingFor != receiver) continue;
+    client->waitingFor = nullptr;
+    auto *sender = client.key();
+    sender->setReading(true);
+    // Lines it sent meanwhile are still waiting to be read.
+    QTimer::singleShot(0, sender, [this, sender] { readClient(sender); });
+  }
+}
+
 void CentralServer::setTranslationService(TranslationService *service) {
   translation_ = service;
   connect(service, &TranslationService::infoChanged, this,
@@ -107,6 +128,8 @@ void CentralServer::addLink(CentralLink *link) {
           [this, link] { readClient(link); });
   connect(link, &CentralLink::disconnected, this,
           [this, link] { dropClient(link, QStringLiteral("disconnected")); });
+  connect(link, &CentralLink::bytesWritten, this,
+          [this, link] { receiverDrained(link); });
   send(link, "CENTRAL_CHALLENGE " + client.nonce);
   // Lines may have arrived with the connection, e.g. in a WebSocket's
   // first frames.
@@ -115,10 +138,10 @@ void CentralServer::addLink(CentralLink *link) {
 
 void CentralServer::readClient(CentralLink *socket) {
   auto client = clients_.find(socket);
-  if (client == clients_.end()) return;
+  if (client == clients_.end() || client->waitingFor) return;
   client->buffer.append(socket->readAll());
   client->lastActivity.start();
-  while (clients_.contains(socket)) {
+  while (clients_.contains(socket) && !clients_[socket].waitingFor) {
     auto &buffer = clients_[socket].buffer;
     const auto newline = buffer.indexOf('\n');
     if (newline < 0) {
@@ -164,6 +187,12 @@ void CentralServer::processLine(CentralLink *socket, const QString &line) {
     }
   } else if (command == QStringLiteral("CENTRAL_PING")) {
     send(socket, "CENTRAL_PONG");
+  } else if (command == QStringLiteral("CENTRAL_STATUS") && parts.size() == 2) {
+    const bool away = parts.at(1) == QStringLiteral("away");
+    if (client.away != away) {
+      client.away = away;
+      broadcast(statusLine(client), socket);
+    }
   } else if (command == QStringLiteral("CENTRAL_TRANSLATE") &&
              parts.size() == 3 && translation_) {
     translation_->translate(socket, parts.at(1), parts.at(2),
@@ -237,6 +266,7 @@ void CentralServer::registerClient(CentralLink *socket,
     if (other.key() != socket && other->registered) {
       send(socket, peerLine(*other));
       if (other->web) send(socket, kindLine(*other));
+      if (other->away) send(socket, statusLine(*other));
     }
   }
   send(socket, QStringLiteral("CENTRAL_WELCOME %1 %2")
@@ -305,11 +335,15 @@ void CentralServer::relay(CentralLink *socket, const QString &channelId,
       return;
     }
   }
-  if (destination->bytesToWrite() > MaximumPendingBytes) {
+  if (destination->bytesToWrite() > maximumPending_) {
     closeChannel(channelId, nullptr, QStringLiteral("overloaded"));
     return;
   }
   send(destination, "CENTRAL_DATA " + channelId.toUtf8() + ' ' + line);
+  if (destination->bytesToWrite() > relayHighWater_) {
+    clients_[socket].waitingFor = destination;
+    socket->setReading(false);
+  }
 }
 
 void CentralServer::closeChannel(const QString &channelId,
@@ -329,6 +363,14 @@ void CentralServer::dropClient(CentralLink *socket, const QString &why) {
   if (found == clients_.end()) return;
   const auto client = *found;
   clients_.erase(found);
+  // Its senders need not wait for it any longer.
+  for (auto other = clients_.begin(); other != clients_.end(); ++other) {
+    if (other->waitingFor != socket) continue;
+    other->waitingFor = nullptr;
+    auto *sender = other.key();
+    sender->setReading(true);
+    QTimer::singleShot(0, sender, [this, sender] { readClient(sender); });
+  }
   for (const auto &channelId : client.channels) {
     closeChannel(channelId, socket, QStringLiteral("closed"));
   }
@@ -352,6 +394,8 @@ void CentralServer::sweepIdleClients() {
     const auto limit = client->registered
                            ? qint64(idleTimeoutMs_)
                            : qMin<qint64>(idleTimeoutMs_, RegistrationTimeoutMs);
+    // A sender held back for a slow receiver is not silent.
+    if (client->waitingFor) continue;
     if (client->lastActivity.elapsed() > limit) idle.append(client.key());
   }
   for (auto *socket : idle) {
@@ -369,6 +413,11 @@ void CentralServer::broadcast(const QByteArray &line, CentralLink *except) {
       send(client.key(), line);
     }
   }
+}
+
+QByteArray CentralServer::statusLine(const Client &client) const {
+  return "CENTRAL_PEER_STATUS " + client.id.toUtf8() +
+         (client.away ? " away" : " active");
 }
 
 QByteArray CentralServer::kindLine(const Client &client) const {
