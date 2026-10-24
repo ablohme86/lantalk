@@ -1,0 +1,15 @@
+[Unit]
+Description=LANTalk central host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# Set LANTALK_CENTRAL_PASSWORD and LANTALKD_OPTIONS in this file.
+EnvironmentFile=-@SYSCONFDIR@/lantalk/lantalkd.conf
+ExecStart=@BINDIR@/lantalkd $LANTALKD_OPTIONS
+DynamicUser=yes
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

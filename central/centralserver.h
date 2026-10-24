@@ -14,7 +14,7 @@
 
 class QTcpSocket;
 
-// lantalk-centralized-service: keeps the list of connected LANTalk clients
+// lantalkd: keeps the list of connected LANTalk clients
 // and relays each conversation between two of them, line by line, without
 // interpreting it (see protocol/centralprotocol.h).
 class CentralServer final : public QObject {

@@ -8,7 +8,7 @@
 #include <QString>
 
 // The LANTALK CENTRAL protocol between LANTalk clients and
-// lantalk-centralized-service. It is line based like LANCHAT PROTOCOL; every
+// lantalkd. It is line based like LANCHAT PROTOCOL; every
 // command starts with "CENTRAL_". A client registers with CENTRAL_HELLO and
 // then opens virtual channels to other clients. Each channel carries an
 // unmodified LANCHAT PROTOCOL conversation, one line per CENTRAL_DATA, so the

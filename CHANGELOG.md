@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- The central host service is now called `lantalkd` (it was
+  `lantalk-centralized-service`). On Linux, `make lantalkd` builds only the
+  service and `sudo make install` installs it with a systemd unit and
+  `/etc/lantalk/lantalkd.conf` for the password and options.
+
 ## v1.8.0 - 2026-10-24
 
 ### Added

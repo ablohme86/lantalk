@@ -11,7 +11,7 @@
 
 int main(int argc, char *argv[]) {
   QCoreApplication application(argc, argv);
-  application.setApplicationName(QStringLiteral("lantalk-centralized-service"));
+  application.setApplicationName(QStringLiteral("lantalkd"));
   application.setApplicationVersion(QStringLiteral(LANTALK_VERSION));
 
   QCommandLineParser parser;
@@ -89,7 +89,7 @@ int main(int argc, char *argv[]) {
     return 1;
   }
   std::fprintf(stdout,
-               "lantalk-centralized-service %s listening on %s:%u (%s)\n",
+               "lantalkd %s listening on %s:%u (%s)\n",
                LANTALK_VERSION, qPrintable(address.toString()),
                unsigned(server.serverPort()),
                password.isEmpty() ? "no password" : "password required");

@@ -123,7 +123,7 @@ chat input, and launching LANTalk again activates the running instance.
 
 LANTalk normally talks directly to peers on the LAN. When the computers
 cannot reach each other directly (different networks, VPNs, firewalls), run
-`lantalk-centralized-service` on a server that all of them can reach and
+`lantalkd` on a server that all of them can reach and
 enter its IP address or DNS name, optionally with `:port`, under
 **Settings → General → Central host** (TUI: **Settings → Central Host**).
 In central mode LANTalk:
@@ -142,16 +142,13 @@ peer's address and nickname, so the history of a peer seen through a
 central host is kept apart from the history of the same peer on the LAN if
 the addresses differ.
 
-The service is a separate console program built and installed next to
-`lantalk` (`bin/lantalk-centralized-service`, Qt Core and Network only). To
-build only the service, for example on a server without Qt Widgets, run
-`make central-server` (or configure with `-DLANTALK_BUILD_CLIENT=OFF`); the
-program lands in `build-central/lantalk-centralized-service`. It runs on any
+The service, `lantalkd`, is a separate console program built and installed
+next to `lantalk` (`bin/lantalkd`, Qt Core and Network only). It runs on any
 Linux or Windows server:
 
 ```sh
-lantalk-centralized-service --port 45455            # all addresses
-lantalk-centralized-service --listen 10.0.0.5 -p 45455
+lantalkd --port 45455            # all addresses
+lantalkd --listen 10.0.0.5 -p 45455
 ```
 
 To require a password, put it on the first line of a file and pass
@@ -167,22 +164,25 @@ settings change. Clients keep the password in their LANTalk settings in
 plain text.
 
 It logs sign-ins, sign-outs, and refused sign-ins, never message contents.
-A systemd unit might look like:
 
-```ini
-[Unit]
-Description=LANTalk central host
-After=network-online.target
+To build and install only the service on a Linux server, for example one
+without Qt Widgets, run:
 
-[Service]
-ExecStart=/opt/lantalk/bin/lantalk-centralized-service --port 45455 --password-file ${CREDENTIALS_DIRECTORY}/password
-LoadCredential=password:/etc/lantalk/central-password
-DynamicUser=yes
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
+```sh
+make lantalkd
+sudo make install
+sudo editor /etc/lantalk/lantalkd.conf   # password and options
+sudo systemctl enable --now lantalkd
 ```
+
+`make lantalkd` configures with `-DLANTALK_BUILD_CLIENT=OFF` in
+`build-lantalkd/`. `make install` puts `lantalkd` in `/usr/local/bin`
+(`PREFIX=...` changes that), a systemd unit in
+`/etc/systemd/system/lantalkd.service`, and, unless it exists already,
+`/etc/lantalk/lantalkd.conf`, readable only by root, which sets
+`LANTALK_CENTRAL_PASSWORD` and `LANTALKD_OPTIONS`. The unit runs the service
+as a throwaway user (`DynamicUser=yes`); follow its log with
+`journalctl -u lantalkd -f`.
 
 Without a password, anyone who can reach the port can sign in under any
 nickname and see who is online. The password only controls who signs in:
@@ -241,7 +241,7 @@ the sender's side and never sent.
   TCP or a relayed channel); `protocol/centralclient.*` connects to a
   central host and relays channels through it, and
   `protocol/centralprotocol.h` holds what client and service share.
-- `central/` is `lantalk-centralized-service`.
+- `central/` is `lantalkd`.
 - `protocol/connectionregistry.*` enforces one connection per peer, and
   `protocol/conversationidentity.*` defines how peers are compared.
 - `translationrestorer.*` stores Live Translate languages per conversation and

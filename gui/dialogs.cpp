@@ -188,7 +188,7 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
   centralHost_->setPlaceholderText(
       QStringLiteral("None (chat directly on the LAN)"));
   centralHost_->setToolTip(QStringLiteral(
-      "IP address or DNS name of a lantalk-centralized-service, optionally "
+      "IP address or DNS name of a server running lantalkd, optionally "
       "with :port (default %1). With a central host, LANTalk stops listening "
       "and sends every conversation through it.")
                                .arg(CentralProtocol::DefaultCentralPort));

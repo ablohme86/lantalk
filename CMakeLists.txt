@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 option(LANTALK_BUILD_TESTS "Build the LANTalk unit tests" ON)
-# OFF builds only lantalk-centralized-service, so a server needs no Qt Widgets.
+# OFF builds only lantalkd, so a server needs no Qt Widgets.
 option(LANTALK_BUILD_CLIENT "Build the LANTalk client" ON)
 
 if(LANTALK_BUILD_CLIENT)
@@ -33,18 +33,18 @@ if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
 endif()
 
-qt_add_executable(lantalk-centralized-service
+qt_add_executable(lantalkd
     central/main.cpp
 )
-target_link_libraries(lantalk-centralized-service PRIVATE lantalk_central_lib)
-set_target_properties(lantalk-centralized-service PROPERTIES MACOSX_BUNDLE FALSE)
+target_link_libraries(lantalkd PRIVATE lantalk_central_lib)
+set_target_properties(lantalkd PROPERTIES MACOSX_BUNDLE FALSE)
 if(UNIX AND NOT APPLE)
-    set_target_properties(lantalk-centralized-service PROPERTIES
+    set_target_properties(lantalkd PROPERTIES
         INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}"
     )
 endif()
 
-install(TARGETS lantalk-centralized-service RUNTIME DESTINATION bin)
+install(TARGETS lantalkd RUNTIME DESTINATION bin)
 
 if(LANTALK_BUILD_CLIENT)
     # Everything except main.cpp, so the unit tests can link the same code.

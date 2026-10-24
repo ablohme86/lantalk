@@ -14,7 +14,7 @@
 
 class RelayTransport;
 
-// The connection to a lantalk-centralized-service. While a central host is
+// The connection to lantalkd, the central host. While a central host is
 // configured LANTalk neither listens for chats nor scans the LAN: the service
 // lists the other connected clients and relays every conversation, each over
 // its own channel (see protocol/centralprotocol.h).

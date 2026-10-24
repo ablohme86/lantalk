@@ -196,7 +196,7 @@ jobs:
           Copy-Item -Path (Join-Path $stageDir '*') -Destination $appDir -Recurse -Force
           Copy-Item -Path README.md, LICENSE -Destination $appDir
 
-          foreach ($required in 'bin\lantalk.exe', 'bin\lantalk-centralized-service.exe', 'bin\qt.conf', 'plugins\platforms\qwindows.dll') {
+          foreach ($required in 'bin\lantalk.exe', 'bin\lantalkd.exe', 'bin\qt.conf', 'plugins\platforms\qwindows.dll') {
             if (-not (Test-Path (Join-Path $appDir $required))) {
               throw "The staged Windows app is missing $required."
             }

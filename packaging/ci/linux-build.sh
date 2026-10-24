@@ -20,7 +20,7 @@ case "$mode" in
     # Qt's deploy step requires an absolute install prefix.
     cmake --install build-ci-release --prefix "$PWD/dist/$PACKAGE"
     test -x "dist/$PACKAGE/bin/lantalk"
-    test -x "dist/$PACKAGE/bin/lantalk-centralized-service"
+    test -x "dist/$PACKAGE/bin/lantalkd"
     cp README.md LICENSE CHANGELOG.md "dist/$PACKAGE/"
     tar -C dist -czf "dist/$PACKAGE.tar.gz" "$PACKAGE"
     ;;
