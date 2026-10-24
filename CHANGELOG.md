@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.14.0 - 2026-10-24
+
 ### Added
 
 - Personal PIN: the first time a nickname signs in to a central host,
