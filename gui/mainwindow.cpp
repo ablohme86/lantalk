@@ -863,6 +863,7 @@ ChatTab *MainWindow::createTab(ChatSession *session,
     if (tabIndex >= 0) {
       if (tabs_->currentWidget() == tab) selectHostForTab(tab);
       tabs_->setTabText(tabIndex, tab->title());
+      updateTabStatus(tab);
       persistOpenConnections();
     }
   });
@@ -875,7 +876,16 @@ ChatTab *MainWindow::createTab(ChatSession *session,
 
 void MainWindow::showTab(ChatTab *tab, const QString &title) {
   tabs_->setCurrentIndex(tabs_->addTab(tab, title));
+  updateTabStatus(tab);
   persistOpenConnections();
+}
+
+void MainWindow::updateTabStatus(ChatTab *tab) {
+  const int index = tabs_->indexOf(tab);
+  if (index < 0) return;
+  const bool online = tab->isConnected();
+  tabs_->setTabIcon(index, createStatusIcon(online));
+  tabs_->setTabToolTip(index, online ? tr("Online") : tr("Offline"));
 }
 
 ChatTab *MainWindow::tabForSession(ChatSession *session) const {

@@ -30,6 +30,8 @@ class ChatTab final : public QWidget {
 public:
   explicit ChatTab(ChatSession *session, QWidget *parent = nullptr);
   QString title() const;
+  // The handshake with the peer is done and the connection is up.
+  bool isConnected() const;
   ChatSession *session() const;
   QString reconnectAddress() const;
   quint16 reconnectPort() const;

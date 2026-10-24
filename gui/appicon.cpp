@@ -74,3 +74,20 @@ QIcon createAppIcon(int unreadCount) {
   }
   return icon;
 }
+
+QIcon createStatusIcon(bool online) {
+  QIcon icon;
+  for (const int size : {12, 16, 24, 32}) {
+    QPixmap pixmap(size, size);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.scale(size / 16.0, size / 16.0);
+    painter.setPen(QPen(QColor(0, 0, 0, 60), 1));
+    painter.setBrush(QColor(online ? QStringLiteral("#34c759")
+                                   : QStringLiteral("#ff3b30")));
+    painter.drawEllipse(QRectF(3.5, 3.5, 9, 9));
+    icon.addPixmap(pixmap);
+  }
+  return icon;
+}

@@ -61,6 +61,8 @@ const TranslationRow Translations[] = {
     {"Scanning for hosts...", "Søker etter verter...", "正在扫描主机...", "正在掃描主機..."},
     {"Connecting to the central host...", "Kobler til den sentrale verten...", "正在连接到中心主机...", "正在連線到中央主機..."},
     {"Hosts", "Verter", "主机", "主機"},
+    {"Online", "Pålogget", "在线", "在線上"},
+    {"Offline", "Frakoblet", "离线", "離線"},
     {"Web", "Web", "网页", "網頁"},
     {"End lantalk.exe in Task Manager", "Avslutt lantalk.exe i Oppgavebehandling", "在任务管理器中结束 lantalk.exe", "在工作管理員中結束 lantalk.exe"},
     {"Stop the lantalk process", "Stopp lantalk-prosessen", "停止 lantalk 进程", "停止 lantalk 處理程序"},

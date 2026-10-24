@@ -344,6 +344,8 @@ QString ChatTab::title() const {
 
 ChatSession *ChatTab::session() const { return session_; }
 
+bool ChatTab::isConnected() const { return connected_; }
+
 QString ChatTab::reconnectAddress() const { return reconnectAddress_; }
 
 quint16 ChatTab::reconnectPort() const { return reconnectPort_; }

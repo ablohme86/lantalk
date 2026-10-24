@@ -46,6 +46,8 @@ private slots:
   // The sidebar's text while it lists no hosts.
   void setHostListStatus(const QString &text);
   void selectHostForTab(ChatTab *tab);
+  // The green or red dot on a conversation tab.
+  void updateTabStatus(ChatTab *tab);
   void showConnectDialog();
   void acceptConnection();
 

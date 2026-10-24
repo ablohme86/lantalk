@@ -53,6 +53,9 @@
   the web client do, instead of a drop-down list: nickname with the address
   (or `Web`) below it, one click to open or switch to the conversation, and
   the open conversation's host selected. The sidebar's width is remembered.
+- Conversation tabs show a green dot while the conversation is connected
+  and a red one while it is not (connecting, reconnecting, or
+  disconnected).
 - While the other person has Live Translate on, your Live Translate button
   is disabled and says why, so only one side translates at a time.
 

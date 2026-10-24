@@ -229,6 +229,24 @@ private slots:
     QVERIFY(tab.findChild<QCheckBox *>() == nullptr);
   }
 
+  void tabKnowsWhetherItIsConnected() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *session = alice.connectTo(bob);
+    ChatTab tab(session);
+    session->setParent(&tab);
+    QSignalSpy titles(&tab, &ChatTab::titleChanged);
+    QVERIFY(!tab.isConnected());
+    QTRY_COMPARE(bob.liveSessions().size(), 1);
+    QTRY_VERIFY(tab.isConnected());
+    QVERIFY(!titles.isEmpty());
+    // The main window updates the tab's dot on titleChanged().
+    titles.clear();
+    bob.liveSessions().first()->closeConnection();
+    QTRY_VERIFY(!tab.isConnected());
+    QTRY_VERIFY(!titles.isEmpty());
+  }
+
   void notificationsShowTheMessage() {
     Peer alice(QStringLiteral("alice"));
     Peer bob(QStringLiteral("bob"));
