@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.13.0 - 2026-10-24
+
 ### Added
 
 - Away status: after 10 minutes without touching LANTalk (keyboard or mouse
