@@ -143,8 +143,11 @@ central host is kept apart from the history of the same peer on the LAN if
 the addresses differ.
 
 The service is a separate console program built and installed next to
-`lantalk` (`bin/lantalk-centralized-service`, Qt Core and Network only). It
-runs on any Linux or Windows server:
+`lantalk` (`bin/lantalk-centralized-service`, Qt Core and Network only). To
+build only the service, for example on a server without Qt Widgets, run
+`make central-server` (or configure with `-DLANTALK_BUILD_CLIENT=OFF`); the
+program lands in `build-central/lantalk-centralized-service`. It runs on any
+Linux or Windows server:
 
 ```sh
 lantalk-centralized-service --port 45455            # all addresses
