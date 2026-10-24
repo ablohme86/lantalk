@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.8.0 - 2026-10-24
+
 ### Added
 
 - Central host mode. Enter the IP address or DNS name of a server running
