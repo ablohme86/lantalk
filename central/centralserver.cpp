@@ -3,6 +3,7 @@
 #include "central/centrallink.h"
 #include "central/translationservice.h"
 
+#include "appconfig.h"
 #include "protocol/centralprotocol.h"
 #include "protocol/conversationidentity.h"
 
@@ -30,7 +31,8 @@ QByteArray createNonce() {
 } // namespace
 
 CentralServer::CentralServer(QObject *parent)
-    : QObject(parent), idleTimeoutMs_(CentralProtocol::IdleTimeoutMs) {
+    : QObject(parent), idleTimeoutMs_(CentralProtocol::IdleTimeoutMs),
+      maximumFileSize_(MaximumFileSize) {
   connect(&server_, &QTcpServer::newConnection, this,
           &CentralServer::acceptClients);
   sweepTimer_.setInterval(5 * 1000);
@@ -75,6 +77,10 @@ void CentralServer::setLogger(std::function<void(const QString &)> logger) {
 void CentralServer::setIdleTimeout(int milliseconds) {
   idleTimeoutMs_ = milliseconds;
   sweepTimer_.setInterval(qMax(50, milliseconds / 4));
+}
+
+void CentralServer::setMaximumFileSize(qint64 bytes) {
+  maximumFileSize_ = bytes;
 }
 
 void CentralServer::setTranslationService(TranslationService *service) {
@@ -239,6 +245,7 @@ void CentralServer::registerClient(CentralLink *socket,
   broadcast(peerLine(registered), socket);
   // Older clients ignore the unknown line and list web users as usual.
   if (registered.web) broadcast(kindLine(registered), socket);
+  send(socket, "CENTRAL_FILE_LIMIT " + QByteArray::number(maximumFileSize_));
   if (translation_) send(socket, translation_->infoLine());
   log(QStringLiteral("%1 connected (%2 online)")
           .arg(describe(registered))
@@ -268,12 +275,36 @@ void CentralServer::openChannel(CentralLink *socket, const QString &channelId,
 
 void CentralServer::relay(CentralLink *socket, const QString &channelId,
                           const QByteArray &line) {
-  const auto channel = channels_.constFind(channelId);
-  if (channel == channels_.cend()) return;
+  const auto channel = channels_.find(channelId);
+  if (channel == channels_.end()) return;
   CentralLink *destination = nullptr;
   if (channel->opener == socket) destination = channel->target;
   else if (channel->target == socket) destination = channel->opener;
   if (!destination) return;
+  // The one place lantalkd reads the conversation: file transfers over the
+  // size limit stop here. FILE_BEGIN <id> <name> <type> <size>, then
+  // FILE_CHUNK <id> <data> and FILE_END <id>.
+  if (line.startsWith("FILE_")) {
+    const auto parts = line.split(' ');
+    const auto id = QString::fromUtf8(parts.value(1));
+    if (parts.first() == "FILE_BEGIN") {
+      bool sizeIsValid = false;
+      const auto size = parts.value(4).toLongLong(&sizeIsValid);
+      if (sizeIsValid && size > maximumFileSize_) {
+        channel->refusedFiles.insert(id);
+        send(socket, "CENTRAL_FILE_REJECTED " + channelId.toUtf8() + ' ' +
+                         id.toUtf8() + ' ' + QByteArray::number(maximumFileSize_));
+        log(QStringLiteral("Refused a file of %1 bytes from %2 (limit %3)")
+                .arg(size)
+                .arg(describe(clients_.value(socket)))
+                .arg(maximumFileSize_));
+        return;
+      }
+    } else if (channel->refusedFiles.contains(id)) {
+      if (parts.first() == "FILE_END") channel->refusedFiles.remove(id);
+      return;
+    }
+  }
   if (destination->bytesToWrite() > MaximumPendingBytes) {
     closeChannel(channelId, nullptr, QStringLiteral("overloaded"));
     return;

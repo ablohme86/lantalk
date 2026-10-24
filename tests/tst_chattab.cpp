@@ -4,6 +4,7 @@
 #include "gui/chatlog.h"
 #include "gui/chattab.h"
 #include "gui/dialogs.h"
+#include "protocol/chathistory.h"
 #include "ollamadiscovery.h"
 #include "translationrestorer.h"
 
@@ -15,7 +16,9 @@
 #include <QClipboard>
 #include <QLabel>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 
 #include <algorithm>
 
@@ -240,6 +243,48 @@ private slots:
     QCOMPARE(notified.first().at(1).toString(), QStringLiteral("hello there"));
   }
 
+  void fileTransfersShowProgressBubbles() {
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    auto *aliceSession = alice.connectTo(bob);
+    ChatTab aliceTab(aliceSession);
+    aliceSession->setParent(&aliceTab);
+    QTRY_COMPARE(bob.liveSessions().size(), 1);
+    auto *bobSession = bob.liveSessions().first();
+    ChatTab bobTab(bobSession);
+    QTRY_VERIFY(aliceSession->isHandshakeComplete());
+    QTRY_VERIFY(bobSession->isHandshakeComplete());
+
+    QTemporaryDir directory;
+    QFile file(directory.filePath(QStringLiteral("notes.txt")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QByteArray(100 * 1024, 'x'));
+    file.close();
+
+    // Each side shows the transfer as it happens, then the attachment in
+    // the same place.
+    QStringList uploading;
+    QStringList receiving;
+    connect(aliceSession, &ChatSession::fileTransferProgress, &aliceTab, [&] {
+      uploading << aliceTab.findChild<ChatLog *>()->toPlainText();
+    });
+    connect(bobSession, &ChatSession::fileTransferProgress, &bobTab, [&] {
+      receiving << bobTab.findChild<ChatLog *>()->toPlainText();
+    });
+    QSignalSpy received(bobSession, &ChatSession::fileReceived);
+    QVERIFY(aliceSession->sendFile(file.fileName()));
+    QTRY_COMPARE(received.size(), 1);
+
+    QVERIFY(uploading.first().endsWith(QStringLiteral("Uploading notes.txt to bob. 0%…")));
+    QVERIFY(uploading.last().endsWith(QStringLiteral("Uploading notes.txt to bob. 100%…")));
+    QVERIFY(receiving.first().endsWith(QStringLiteral("Receiving notes.txt from alice. 0%…")));
+    QVERIFY(receiving.size() > 2);
+    QTRY_VERIFY(aliceTab.findChild<ChatLog *>()->toPlainText().endsWith(QStringLiteral("notes.txt")));
+    const auto bobLog = bobTab.findChild<ChatLog *>()->toPlainText();
+    QVERIFY(bobLog.endsWith(QStringLiteral("notes.txt")));
+    QVERIFY(!bobLog.contains(QStringLiteral("Receiving")));
+  }
+
   void notificationsWaitForLiveTranslate() {
     FakeOllama ollama({QStringLiteral("translator")});
     QVERIFY(ollama.listen());
@@ -268,6 +313,83 @@ private slots:
     QCOMPARE(notified.first().at(1).toString(), QStringLiteral("<<hello>>"));
     QTest::qWait(100);
     QCOMPARE(notified.size(), 1);
+  }
+
+  void translationsAreRememberedInHistory() {
+    FakeOllama ollama({QStringLiteral("translator")});
+    QVERIFY(ollama.listen());
+    configureOllama(ollama.url(), QStringLiteral("translator"));
+    TranslationSettings::save(QStringLiteral("127.0.0.1"),
+                              QStringLiteral("bob"),
+                              {true, QStringLiteral("Norwegian Bokmål"),
+                               QStringLiteral("English")});
+    Peer alice(QStringLiteral("alice"));
+    Peer bob(QStringLiteral("bob"));
+    {
+      auto *session = new ChatSession(new QTcpSocket, nullptr, &alice.registry());
+      ChatTab tab(session);
+      session->setParent(&tab);
+      QSignalSpy notified(&tab, &ChatTab::notifyIncoming);
+      session->beginHandshake(QStringLiteral("alice"));
+      session->connectToHost(QStringLiteral("127.0.0.1"), bob.port());
+      QTRY_VERIFY(session->liveTranslationActiveOrPending());
+      QTRY_COMPARE(bob.liveSessions().size(), 1);
+      QTest::qWait(100);
+      bob.liveSessions().first()->sendMessage(QStringLiteral("hello"));
+      QTRY_COMPARE(notified.size(), 1);
+    }
+
+    // After a restart the translation is in the history, with the original
+    // as the other version.
+    const auto entries =
+        ChatHistory::load(QStringLiteral("127.0.0.1"), QStringLiteral("bob"));
+    QCOMPARE(entries.size(), 1);
+    QCOMPARE(entries.first().message, QStringLiteral("<<hello>>"));
+    QCOMPARE(entries.first().alternate, QStringLiteral("hello"));
+  }
+
+  void wholeHistoryIsKeptAndShownOnRequest() {
+    const auto address = QStringLiteral("10.0.0.9");
+    const auto when = QDateTime::currentDateTime();
+    for (int index = 0; index < 650; ++index) {
+      ChatHistory::append(address, QStringLiteral("carol"),
+                          index % 2 ? QStringLiteral("You") : QStringLiteral("carol"),
+                          QStringLiteral("message %1").arg(index), when.addSecs(index));
+    }
+    QCOMPARE(ChatHistory::count(address, QStringLiteral("carol")), 650);
+    const auto page = ChatHistory::load(address, QStringLiteral("carol"), 200, 200);
+    QCOMPARE(page.size(), 200);
+    QCOMPARE(page.first().message, QStringLiteral("message 250"));
+    QCOMPARE(page.last().message, QStringLiteral("message 449"));
+
+    ChatLog log;
+    QSignalSpy requested(&log, &ChatLog::earlierMessagesRequested);
+    log.setEarlierMessagesAvailable(true);
+    log.appendMessage(false, QStringLiteral("newest"), when);
+    log.prependHistory({{true, QStringLiteral("older"), when, {}}});
+    const auto lines = log.toPlainText().split(u'\n');
+    QCOMPARE(lines.value(0), QStringLiteral("Show earlier messages"));
+    QCOMPARE(lines.value(1), QStringLiteral("older"));
+    QCOMPARE(lines.value(2), QStringLiteral("newest"));
+    log.setEarlierMessagesAvailable(false);
+    QTRY_COMPARE(log.toPlainText().split(u'\n').value(0), QStringLiteral("older"));
+
+    // Reading at the bottom, the view stays put while older ones go in.
+    log.resize(400, 300);
+    log.show();
+    for (int index = 0; index < 40; ++index) {
+      log.appendMessage(index % 2, QStringLiteral("line %1").arg(index), when);
+    }
+    auto *bar = log.verticalScrollBar();
+    QTRY_VERIFY(bar->maximum() > 0 && bar->value() == bar->maximum());
+    const int maximumBefore = bar->maximum();
+    QList<ChatLog::HistoryMessage> older;
+    for (int index = 0; index < 20; ++index) {
+      older.append({false, QStringLiteral("old %1").arg(index), when, {}});
+    }
+    log.prependHistory(older);
+    QTRY_VERIFY(bar->maximum() > maximumBefore);
+    QCOMPARE(bar->maximum() - bar->value(), 0);
   }
 
   void peerTranslationStatusShowsOurLanguageFirst() {

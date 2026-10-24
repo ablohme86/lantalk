@@ -1,10 +1,13 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
 #include <QList>
 #include <QWidget>
 
+#include "gui/chatlog.h"
 #include "messagetranslator.h"
+#include "protocol/chathistory.h"
 
 class ChatSession;
 class QLabel;
@@ -15,7 +18,6 @@ class QPlainTextEdit;
 class QVBoxLayout;
 class QPushButton;
 class QStackedWidget;
-class ChatLog;
 class ChatImagePreviewWidget;
 class QDragEnterEvent;
 class QDropEvent;
@@ -68,6 +70,8 @@ private:
   struct IncomingMessage {
     QString originalMessage;
     int messageId;
+    // Finds the message in the history when its translation arrives.
+    QDateTime timestamp;
     bool translated = false;
     bool pending = false;
     // A notification waits for this message's translation.
@@ -82,6 +86,8 @@ private:
       const QString &hoverLabel = QStringLiteral("Original"),
       bool historical = false, const QDateTime &timestamp = {});
   void loadConversationHistory();
+  void showEarlierHistory();
+  ChatLog::HistoryMessage historyMessage(const ChatHistory::Entry &entry) const;
   void appendHistorySeparator();
   void translatePendingIncomingMessages();
   void translateIncomingMessage(int index);
@@ -92,9 +98,14 @@ private:
                                 const QString &replacement, bool succeeded);
   void clearOutgoingTranslationStatus();
   void saveAttachmentAs(const QString &path, const QString &suggestedName);
-  void appendFile(const QString &sender, const QString &name,
+  // The attachment replaces the transfer's progress bubble, if any.
+  void appendFile(const QString &transferId, const QString &name,
                   const QString &path, const QString &mimeType,
                   bool received);
+  void showTransferProgress(const QString &id, const QString &name,
+                            bool outgoing, int percent);
+  void showTransferFailure(const QString &id, bool outgoing,
+                           const QString &reason);
   void appendSystemMessage(const QString &message);
   void retryConnection();
   void updateTypingIndicator();
@@ -121,6 +132,8 @@ private:
   bool connected_ = false;
   bool hasPeerIdentity_ = false;
   bool historyLoaded_ = false;
+  // History entries shown so far, newest first counted.
+  int historyShown_ = 0;
   struct PendingQuote {
     QWidget *card;
     QCheckBox *translate;
@@ -137,8 +150,12 @@ private:
   bool liveTranslate_ = false;
   bool automaticTranslationRequest_ = false;
   bool outgoingPending_ = false;
-  bool fileSendUiActive_ = false;
-  QString fileSendPreviousInput_;
+  // Progress bubbles of file transfers by transfer id.
+  struct Transfer {
+    int messageId = -1;
+    QString name;
+  };
+  QHash<QString, Transfer> transfers_;
   QString pendingOriginal_;
   QList<IncomingMessage> incomingMessages_;
   QString myLanguage_;

@@ -4,12 +4,14 @@
 #include "protocol/connectionregistry.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QHostAddress>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QList>
 #include <QPointer>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QStringList>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -30,6 +32,10 @@ inline void isolateSettings() {
   QSettings::setPath(QSettings::IniFormat, QSettings::UserScope,
                      directory.path());
   QSettings().clear();
+  // Chat histories are files in the app data folder; keep them apart too.
+  QStandardPaths::setTestModeEnabled(true);
+  QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
+      .removeRecursively();
 }
 
 // One LANTalk instance: a listener plus the sessions it owns, with its own

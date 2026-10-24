@@ -1,3 +1,4 @@
+#include "appconfig.h"
 #include "central/centralserver.h"
 #include "central/translationservice.h"
 #include "central/webserver.h"
@@ -67,6 +68,12 @@ int main(int argc, char *argv[]) {
   const QCommandLineOption noOllamaDiscoveryOption(
       QStringLiteral("no-ollama-discovery"),
       QStringLiteral("Never look for Ollama servers on the network."));
+  const QCommandLineOption maxFileSizeOption(
+      QStringLiteral("max-file-size"),
+      QStringLiteral("Relay files up to <MB> megabytes (default %1, the most "
+                     "LANTalk accepts; 0 relays no files).")
+          .arg(MaximumFileSize / (1024 * 1024)),
+      QStringLiteral("MB"), QString::number(MaximumFileSize / (1024 * 1024)));
   parser.addOption(portOption);
   parser.addOption(listenOption);
   parser.addOption(passwordFileOption);
@@ -76,6 +83,7 @@ int main(int argc, char *argv[]) {
   parser.addOption(ollamaUrlOption);
   parser.addOption(ollamaModelOption);
   parser.addOption(noOllamaDiscoveryOption);
+  parser.addOption(maxFileSizeOption);
   parser.process(application);
 
   // Not a plain --password option: command lines are visible to every user.
@@ -113,6 +121,15 @@ int main(int argc, char *argv[]) {
     std::fprintf(stderr, "--web-cert and --web-key go together.\n");
     return 2;
   }
+  bool maxFileSizeIsValid = false;
+  const auto maxFileSize = parser.value(maxFileSizeOption).toDouble(&maxFileSizeIsValid);
+  if (!maxFileSizeIsValid || maxFileSize < 0 ||
+      maxFileSize * 1024 * 1024 > double(MaximumFileSize)) {
+    std::fprintf(stderr, "Invalid --max-file-size: %s (0 to %lld MB)\n",
+                 qPrintable(parser.value(maxFileSizeOption)),
+                 static_cast<long long>(MaximumFileSize / (1024 * 1024)));
+    return 2;
+  }
   if (parser.isSet(ollamaUrlOption) != parser.isSet(ollamaModelOption)) {
     std::fprintf(stderr, "--ollama-url and --ollama-model go together.\n");
     return 2;
@@ -127,6 +144,7 @@ int main(int argc, char *argv[]) {
 
   CentralServer server;
   server.setPassword(password);
+  server.setMaximumFileSize(qint64(maxFileSize * 1024 * 1024));
   TranslationService translation;
   translation.setServer(parser.value(ollamaUrlOption),
                         parser.value(ollamaModelOption));
@@ -150,6 +168,12 @@ int main(int argc, char *argv[]) {
                LANTALK_VERSION, qPrintable(address.toString()),
                unsigned(server.serverPort()),
                password.isEmpty() ? "no password" : "password required");
+  if (maxFileSize * 1024 * 1024 < double(MaximumFileSize)) {
+    std::fprintf(stdout, "%s\n",
+                 maxFileSize == 0
+                     ? "File transfers are off"
+                     : qPrintable(QStringLiteral("Files up to %1 MB").arg(maxFileSize)));
+  }
   if (translation.isConfigured()) {
     std::fprintf(stdout, "Live Translate for web clients with %s at %s\n",
                  qPrintable(parser.value(ollamaModelOption)),

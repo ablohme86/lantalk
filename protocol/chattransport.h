@@ -39,6 +39,8 @@ public:
   virtual QString connectionKey(bool outgoing) const = 0;
   // The peer uses lantalkd's web client rather than LANTalk.
   virtual bool peerIsWebClient() const { return false; }
+  // The largest file this route carries, or -1 for no limit of its own.
+  virtual qint64 maximumFileSize() const { return -1; }
 
   // A new, unconnected transport for outgoing connections in the current
   // network mode (direct TCP unless a central host is configured).
@@ -52,6 +54,8 @@ signals:
   void bytesWritten(qint64 bytes);
   void disconnected();
   void errorOccurred();
+  // The route refused an outgoing file (FILE_BEGIN <fileId>).
+  void fileRefused(const QString &fileId, const QString &reason);
 };
 
 class TcpTransport final : public ChatTransport {

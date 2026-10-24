@@ -14,11 +14,15 @@ const storage = {
     try { return (session ? sessionStorage : localStorage).getItem(key); }
     catch { return null; }
   },
+  // False when the value could not be stored, e.g. because storage is full.
   set(key, value, session = false) {
     try {
       const store = session ? sessionStorage : localStorage;
       if (value === null) store.removeItem(key); else store.setItem(key, value);
-    } catch { /* ignored */ }
+      return true;
+    } catch {
+      return false;
+    }
   },
 };
 
@@ -75,9 +79,19 @@ const TEXTS = {
   hideOriginal: ["Hide original", "Skjul original", "隐藏原文", "隱藏原文"],
   you: ["You", "Deg", "你", "你"],
   sentFile: ["Sent a file: %1", "Sendte en fil: %1", "发送了文件：%1", "傳送了檔案：%1"],
-  fileTooLarge: ["Files larger than 50 MB cannot be sent.",
-                 "Filer større enn 50 MB kan ikke sendes.",
-                 "无法发送大于 50 MB 的文件。", "無法傳送大於 50 MB 的檔案。"],
+  fileTooLarge: ["Files larger than %1 cannot be sent.",
+                 "Filer større enn %1 kan ikke sendes.",
+                 "无法发送大于 %1 的文件。", "無法傳送大於 %1 的檔案。"],
+  noFiles: ["This server does not relay files.", "Denne serveren videresender ikke filer.",
+            "此服务器不转发文件。", "此伺服器不轉送檔案。"],
+  uploading: ["Uploading %1 to %2. %3%…", "Laster opp %1 til %2. %3%…",
+              "正在向 %2 上传 %1。%3%…", "正在向 %2 上傳 %1。%3%…"],
+  receiving: ["Receiving %1 from %2. %3%…", "Mottar %1 fra %2. %3%…",
+              "正在接收来自 %2 的 %1。%3%…", "正在接收來自 %2 的 %1。%3%…"],
+  sendFailed: ["Could not send %1 to %2.", "Kunne ikke sende %1 til %2.",
+               "无法将 %1 发送给 %2。", "無法將 %1 傳送給 %2。"],
+  receiveFailed: ["Did not receive %1 from %2.", "Mottok ikke %1 fra %2.",
+                  "未能接收来自 %2 的 %1。", "未能接收來自 %2 的 %1。"],
   today: ["Today", "I dag", "今天", "今天"],
   yesterday: ["Yesterday", "I går", "昨天", "昨天"],
   wrongPassword: ["Wrong password.", "Feil passord.", "密码错误。", "密碼錯誤。"],
@@ -313,7 +327,8 @@ const WAKE_CHECK_MS = 5 * 1000;
 const TYPING_REFRESH_MS = 15 * 1000;
 const TYPING_IDLE_MS = 60 * 1000;
 const TYPING_EXPIRY_MS = 35 * 1000;
-const HISTORY_LIMIT = 200;
+// Per conversation; the browser's storage for the page is a few megabytes.
+const HISTORY_LIMIT = 1000;
 
 const state = {
   socket: null,
@@ -333,6 +348,7 @@ const state = {
   channels: new Map(),      // channel id -> channel
   current: null,            // key of the open conversation
   ollama: { configured: false, discovery: false, scanning: false, servers: [] },
+  maxFileSize: MAX_FILE_SIZE, // lantalkd may allow less (CENTRAL_FILE_LIMIT)
   translations: new Map(),  // request id -> {resolve, reject, timer}
 };
 
@@ -499,6 +515,29 @@ function handleCentral(line) {
       if (channel) channelClosed(channel, true);
       break;
     }
+    case "CENTRAL_FILE_LIMIT": {
+      const limit = Number(parts[1]);
+      state.maxFileSize = Number.isSafeInteger(limit) && limit >= 0
+        ? Math.min(limit, MAX_FILE_SIZE) : MAX_FILE_SIZE;
+      $("composer").querySelector(".attach").hidden = state.maxFileSize === 0;
+      break;
+    }
+    case "CENTRAL_FILE_REJECTED": {
+      const channel = state.channels.get(parts[1]);
+      const message = channel && channel.outgoingFiles.get(parts[2]);
+      if (message) {
+        channel.outgoingFiles.delete(parts[2]);
+        message.transfer = message.transfer ||
+          { name: message.file.name, peer: channel.key && state.conversations.get(channel.key).nickname };
+        failTransfer(message);
+        const conversation = state.conversations.get(channel.key);
+        const limit = Number(parts[3]);
+        if (conversation) {
+          addNotice(conversation, limit ? t("fileTooLarge", formatSize(limit)) : t("noFiles"));
+        }
+      }
+      break;
+    }
     case "CENTRAL_OLLAMA":
       try {
         state.ollama = Object.assign({ servers: [] }, JSON.parse(decodeField(parts[1] || "")));
@@ -567,7 +606,7 @@ function peerFor(conversation) {
 
 function addChannel(id, conversation, open) {
   const channel = { id, key: conversation.key, open, handshake: false,
-                    supportsTyping: false, files: new Map() };
+                    supportsTyping: false, files: new Map(), outgoingFiles: new Map() };
   state.channels.set(id, channel);
   // A newer channel to the same person takes over sending.
   conversation.channel = id;
@@ -587,8 +626,17 @@ function ensureChannel(conversation) {
   sendCentral(`CENTRAL_OPEN ${channel.id} ${peer.id}`);
 }
 
+function failTransfer(message) {
+  if (!message || !message.transfer) return;
+  message.transfer.failed = true;
+  message.pending = false;
+  refreshMessageElement(message);
+}
+
 function channelClosed(channel, notify) {
   state.channels.delete(channel.id);
+  for (const file of channel.files.values()) failTransfer(file.message);
+  for (const message of channel.outgoingFiles.values()) failTransfer(message);
   const conversation = state.conversations.get(channel.key);
   if (!conversation || conversation.channel !== channel.id) return;
   conversation.channel = null;
@@ -736,7 +784,9 @@ function handleChat(channel, line) {
       const mime = decodeField(parts[3] || "");
       if (parts.length !== 5 || !Number.isSafeInteger(size) || size < 0 ||
           size > MAX_FILE_SIZE || !name || name === "." || name === ".." || !mime) return;
-      channel.files.set(parts[1], { name, mime, size, received: 0, chunks: [] });
+      const message = addMessage(conversation, {
+        out: false, transfer: { name, peer: conversation.nickname, percent: 0 } });
+      channel.files.set(parts[1], { name, mime, size, received: 0, chunks: [], message });
       break;
     }
     case "FILE_CHUNK": {
@@ -746,19 +796,29 @@ function handleChat(channel, line) {
       try { chunk = base64UrlToBytes(parts[2]); } catch { chunk = new Uint8Array(); }
       if (!chunk.length || file.received + chunk.length > file.size) {
         channel.files.delete(parts[1]);
+        failTransfer(file.message);
         return;
       }
       file.chunks.push(chunk);
       file.received += chunk.length;
+      setTransferPercent(file.message, Math.floor(file.received * 100 / file.size));
       break;
     }
     case "FILE_END": {
       const file = channel.files.get(parts[1]);
       channel.files.delete(parts[1]);
-      if (!file || file.received !== file.size) return;
+      if (!file) return;
+      if (file.received !== file.size) {
+        failTransfer(file.message);
+        return;
+      }
+      // The progress bubble becomes the attachment.
       const blob = new Blob(file.chunks, { type: file.mime });
-      addMessage(conversation, { out: false, file: { name: file.name, mime: file.mime,
-                                                     url: URL.createObjectURL(blob) } });
+      file.message.file = { name: file.name, mime: file.mime, url: URL.createObjectURL(blob) };
+      delete file.message.transfer;
+      refreshMessageElement(file.message);
+      saveHistory();
+      renderPeople();
       announce(conversation, t("sentFile", file.name));
       break;
     }
@@ -888,12 +948,15 @@ function sendText(conversation, text) {
 }
 
 async function sendFile(conversation, file) {
-  if (file.size > MAX_FILE_SIZE) {
-    addNotice(conversation, t("fileTooLarge"));
+  if (file.size > state.maxFileSize) {
+    addNotice(conversation, state.maxFileSize
+      ? t("fileTooLarge", formatSize(state.maxFileSize)) : t("noFiles"));
     return;
   }
+  // The bubble shows the upload until the file is on its way.
   const message = addMessage(conversation, {
-    out: true, pending: true, progress: 0,
+    out: true, pending: true,
+    transfer: { name: file.name, peer: conversation.nickname, percent: 0 },
     file: { name: file.name, mime: file.type || "application/octet-stream",
             url: URL.createObjectURL(file) },
   });
@@ -906,21 +969,38 @@ async function sendFile(conversation, file) {
 
 function pumpFile(conversation, message, id, bytes, offset) {
   const channel = currentChannel(conversation);
-  if (!channel || !state.socket) return; // The connection went away mid-file.
+  if (!channel || !state.socket || message.transfer.failed) {
+    // The connection went away mid-file, or the server refused it.
+    message.transfer.failed = true;
+    message.pending = false;
+    refreshMessageElement(message);
+    return;
+  }
+  channel.outgoingFiles.set(id, message);
   while (offset < bytes.length && state.socket.bufferedAmount < 256 * 1024) {
     const chunk = bytes.subarray(offset, offset + CHUNK_SIZE);
     sendChat(channel, `FILE_CHUNK ${id} ${bytesToBase64Url(chunk)}`);
     offset += chunk.length;
   }
-  message.progress = bytes.length ? offset / bytes.length : 1;
+  setTransferPercent(message, bytes.length ? Math.floor(offset * 100 / bytes.length) : 100);
   if (offset < bytes.length) {
-    refreshMessageElement(message);
     setTimeout(() => pumpFile(conversation, message, id, bytes, offset), 30);
     return;
   }
+  // Kept in outgoingFiles: a small file is all sent before lantalkd can
+  // refuse it.
   sendChat(channel, `FILE_END ${id}`);
   message.pending = false;
-  delete message.progress;
+  delete message.transfer;
+  refreshMessageElement(message);
+}
+
+const formatSize = bytes => bytes >= 1024 * 1024
+  ? `${Math.round(bytes / 1024 / 1024 * 10) / 10} MB` : `${Math.round(bytes / 1024)} KB`;
+
+function setTransferPercent(message, percent) {
+  if (message.transfer.percent === percent) return;
+  message.transfer.percent = percent;
   refreshMessageElement(message);
 }
 
@@ -1289,24 +1369,32 @@ let saveTimer = 0;
 function saveHistory() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    const data = [];
-    for (const conversation of state.conversations.values()) {
-      // Files live only as long as the page; history keeps their names.
-      const messages = conversation.messages.slice(-HISTORY_LIMIT).map(message =>
-        message.file
-          ? { out: message.out, time: message.time, notice: `📎 ${message.file.name}` }
-          : { out: message.out, time: message.time, text: message.text,
-              original: message.original || undefined,
-              translation: message.translation || undefined, notice: message.notice,
-              // A message still being translated never went out.
-              pending: (message.pending && !message.translatingNow) || undefined,
-              failed: message.failed || (message.out && message.translatingNow) || undefined });
-      if (messages.length) {
-        data.push({ nickname: conversation.nickname, address: conversation.address, messages });
-      }
+    // When the browser's storage is full, keep fewer messages rather than
+    // none.
+    for (let limit = HISTORY_LIMIT; limit >= 50; limit = Math.floor(limit / 2)) {
+      if (storage.set(historyKey(), JSON.stringify(historyData(limit)))) return;
     }
-    storage.set(historyKey(), JSON.stringify(data));
   }, 300);
+}
+
+function historyData(limit) {
+  const data = [];
+  for (const conversation of state.conversations.values()) {
+    // Files live only as long as the page; history keeps their names.
+    const messages = conversation.messages.slice(-limit).map(message =>
+      message.file
+        ? { out: message.out, time: message.time, notice: `📎 ${message.file.name}` }
+        : { out: message.out, time: message.time, text: message.text,
+            original: message.original || undefined,
+            translation: message.translation || undefined, notice: message.notice,
+            // A message still being translated never went out.
+            pending: (message.pending && !message.translatingNow) || undefined,
+            failed: message.failed || (message.out && message.translatingNow) || undefined });
+    if (messages.length) {
+      data.push({ nickname: conversation.nickname, address: conversation.address, messages });
+    }
+  }
+  return data;
 }
 
 function loadHistory() {
@@ -1623,7 +1711,16 @@ function refreshMessageElement(message) {
 
 function fillMessage(element, message) {
   element.replaceChildren();
-  if (message.file) {
+  if (message.transfer) {
+    const { name, peer, percent, failed } = message.transfer;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble pending";
+    bubble.classList.toggle("failed", Boolean(failed));
+    bubble.textContent = failed
+      ? t(message.out ? "sendFailed" : "receiveFailed", name, peer)
+      : t(message.out ? "uploading" : "receiving", name, peer, percent);
+    element.append(bubble);
+  } else if (message.file) {
     const isImage = message.file.mime.startsWith("image/");
     if (isImage) {
       const wrapper = document.createElement("div");
@@ -1636,7 +1733,7 @@ function fillMessage(element, message) {
       wrapper.append(image);
       element.append(wrapper);
     }
-    if (!isImage || message.pending) {
+    if (!isImage) {
       const bubble = document.createElement("div");
       bubble.className = "bubble file";
       bubble.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>';
@@ -1645,16 +1742,6 @@ function fillMessage(element, message) {
       link.download = message.file.name;
       link.textContent = message.file.name;
       bubble.append(link);
-      if (message.progress !== undefined) {
-        const progress = document.createElement("div");
-        progress.className = "progress";
-        const bar = document.createElement("div");
-        bar.style.width = `${Math.round(message.progress * 100)}%`;
-        progress.append(bar);
-        const column = document.createElement("div");
-        column.append(link, progress);
-        bubble.append(column);
-      }
       element.append(bubble);
     }
   } else {

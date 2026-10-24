@@ -41,6 +41,8 @@ public:
   // Offers Live Translate through lantalkd to clients (see
   // central/translationservice.h).
   void setTranslationService(TranslationService *service);
+  // Relays files up to this size; larger ones are refused. 0 allows none.
+  void setMaximumFileSize(qint64 bytes);
 
 private:
   struct Client {
@@ -60,6 +62,8 @@ private:
   struct Channel {
     CentralLink *opener;
     CentralLink *target;
+    // Transfers over the size limit, whose lines are not relayed.
+    QSet<QString> refusedFiles;
   };
 
   void acceptClients();
@@ -90,4 +94,5 @@ private:
   QString password_;
   std::function<void(const QString &)> logger_;
   TranslationService *translation_ = nullptr;
+  qint64 maximumFileSize_;
 };

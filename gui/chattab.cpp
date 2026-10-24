@@ -201,6 +201,8 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
             status_->setText(tr("Connected to %1").arg(name));
             emit titleChanged();
           });
+  connect(log_, &ChatLog::earlierMessagesRequested, this,
+          &ChatTab::showEarlierHistory);
   connect(log_, &ChatLog::saveAttachmentRequested, this,
           &ChatTab::saveAttachmentAs);
   connect(log_, &ChatLog::imageRequested, this, [this](const QString &path) {
@@ -214,51 +216,23 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   connect(imageViewer_->closeButton(), &QPushButton::clicked, this,
           [this] { viewStack_->setCurrentWidget(log_); });
   connect(session_, &ChatSession::messageReceived, this, &ChatTab::received);
-  connect(
-      session_, &ChatSession::fileSent, this,
-      [this](const QString &name, const QString &path, const QString &mime) {
-        appendFile(QStringLiteral("You"), name, path, mime, false);
-      });
-  connect(
-      session_, &ChatSession::fileReceived, this,
-      [this](const QString &name, const QString &path, const QString &mime) {
-        appendFile(session_->peerName(), name, path, mime, true);
-        emit incomingMessageReceived();
-        emit notifyIncoming(session_->peerName(),
-                            tr("Sent a file: %1").arg(name));
-      });
-  connect(session_, &ChatSession::fileSendProgressChanged, this,
-          [this](int percent) {
-            if (!fileSendUiActive_) {
-              fileSendPreviousInput_ = outgoingPending_ ? QString() : input_->text();
-              fileSendUiActive_ = true;
-            }
-            input_->setText(tr("Sending file... Please wait... %1%")
-                                .arg(percent));
-            input_->setReadOnly(true);
-            auto font = input_->font();
-            font.setItalic(true);
-            input_->setFont(font);
+  connect(session_, &ChatSession::fileSent, this,
+          [this](const QString &name, const QString &path,
+                 const QString &mime, const QString &id) {
+            appendFile(id, name, path, mime, false);
           });
-  connect(session_, &ChatSession::fileSendCompleted, this, [this] {
-    if (!fileSendUiActive_) return;
-    fileSendUiActive_ = false;
-    if (outgoingPending_) {
-      input_->setText(tr("Translating message..."));
-      input_->setReadOnly(true);
-      auto font = input_->font();
-      font.setItalic(true);
-      input_->setFont(font);
-      fileSendPreviousInput_.clear();
-      return;
-    }
-    input_->setText(fileSendPreviousInput_);
-    input_->setReadOnly(false);
-    auto font = input_->font();
-    font.setItalic(false);
-    input_->setFont(font);
-    fileSendPreviousInput_.clear();
-  });
+  connect(session_, &ChatSession::fileReceived, this,
+          [this](const QString &name, const QString &path,
+                 const QString &mime, const QString &id) {
+            appendFile(id, name, path, mime, true);
+            emit incomingMessageReceived();
+            emit notifyIncoming(session_->peerName(),
+                                tr("Sent a file: %1").arg(name));
+          });
+  connect(session_, &ChatSession::fileTransferProgress, this,
+          &ChatTab::showTransferProgress);
+  connect(session_, &ChatSession::fileTransferFailed, this,
+          &ChatTab::showTransferFailure);
   connect(session_, &ChatSession::liveTranslationGranted, this, [this] {
     liveTranslate_ = true;
     automaticTranslationRequest_ = false;
@@ -424,6 +398,9 @@ void ChatTab::updateLocalTyping() {
 }
 
 namespace {
+
+// History entries shown at a time; "Show earlier messages" adds more.
+constexpr int HistoryPageSize = 200;
 
 // Surrounding blank lines and trailing spaces go; indentation stays.
 QString trimmedQuote(QString text) {
@@ -591,9 +568,6 @@ void ChatTab::configureTranslation() {
 }
 
 void ChatTab::send() {
-  if (fileSendUiActive_) {
-    return;
-  }
   // Surrounding blank lines and trailing spaces go; the indentation of
   // pasted code stays.
   auto text = input_->text();
@@ -640,11 +614,13 @@ void ChatTab::received(const QString &message, const QString &originalMessage) {
                                     originalMessage,
                                     tr("Original"), false,
                                     timestamp);
+  // A message we translate ourselves is stored again once translated.
   ChatHistory::append(session_->peerAddress(), session_->peerName(),
-                      session_->peerName(), message, timestamp);
+                      session_->peerName(), message, timestamp,
+                      originalMessage);
   const int index = incomingMessages_.size();
   incomingMessages_.append(
-      {message, messageId, !originalMessage.isEmpty(), false});
+      {message, messageId, timestamp, !originalMessage.isEmpty(), false});
   emit incomingMessageReceived();
   if (liveTranslate_ && originalMessage.isEmpty()) {
     incomingMessages_[index].notify = true;
@@ -684,7 +660,8 @@ void ChatTab::outgoingTranslationFinished(const QString &translation,
   appendMessage(QStringLiteral("You"), pendingOriginal_, translation,
                 tr("Sent translation"), false, timestamp);
   ChatHistory::append(session_->peerAddress(), session_->peerName(),
-                      QStringLiteral("You"), pendingOriginal_, timestamp);
+                      QStringLiteral("You"), pendingOriginal_, timestamp,
+                      translation);
   pendingOriginal_.clear();
   input_->setFocus(Qt::OtherFocusReason);
 }
@@ -731,14 +708,45 @@ int ChatTab::appendMessage(const QString &sender, const QString &message,
 
 void ChatTab::loadConversationHistory() {
   const auto entries = ChatHistory::load(session_->peerAddress(),
-                                         session_->peerName(), 20);
+                                         session_->peerName(), HistoryPageSize);
   if (entries.isEmpty()) return;
 
   for (const auto &entry : entries) {
-    appendMessage(entry.sender, entry.message, {},
-                  tr("Original"), true, entry.timestamp);
+    const auto message = historyMessage(entry);
+    log_->appendMessage(message.outgoing, message.message, message.timestamp,
+                        true, message.toolTip);
   }
+  historyShown_ = int(entries.size());
   appendHistorySeparator();
+  log_->setEarlierMessagesAvailable(
+      ChatHistory::count(session_->peerAddress(), session_->peerName()) >
+      historyShown_);
+}
+
+void ChatTab::showEarlierHistory() {
+  const auto entries =
+      ChatHistory::load(session_->peerAddress(), session_->peerName(),
+                        HistoryPageSize, historyShown_);
+  QList<ChatLog::HistoryMessage> messages;
+  for (const auto &entry : entries) messages.append(historyMessage(entry));
+  log_->prependHistory(messages);
+  historyShown_ += int(entries.size());
+  log_->setEarlierMessagesAvailable(
+      !entries.isEmpty() &&
+      ChatHistory::count(session_->peerAddress(), session_->peerName()) >
+          historyShown_);
+}
+
+ChatLog::HistoryMessage
+ChatTab::historyMessage(const ChatHistory::Entry &entry) const {
+  // The other version of a translated message shows on hover.
+  const bool outgoing = entry.sender == QStringLiteral("You");
+  return {outgoing, entry.message, entry.timestamp,
+          entry.alternate.isEmpty()
+              ? QString()
+              : QStringLiteral("%1: %2").arg(
+                    outgoing ? tr("Sent translation") : tr("Original"),
+                    entry.alternate)};
 }
 
 void ChatTab::appendHistorySeparator() {
@@ -764,6 +772,11 @@ void ChatTab::replaceTranslationStatus(const QString &originalMessage,
       continue;
     }
     setIncomingMessageText(incoming, replacement, succeeded, false);
+    if (succeeded) {
+      ChatHistory::replace(session_->peerAddress(), session_->peerName(),
+                           session_->peerName(), incoming.timestamp,
+                           replacement, incoming.originalMessage);
+    }
     // The translation, or the original if translating failed.
     if (std::exchange(incoming.notify, false)) {
       emit notifyIncoming(session_->peerName(),
@@ -774,9 +787,6 @@ void ChatTab::replaceTranslationStatus(const QString &originalMessage,
 }
 
 void ChatTab::clearOutgoingTranslationStatus() {
-  if (fileSendUiActive_) {
-    return;
-  }
   input_->clear();
   input_->setReadOnly(false);
   auto inputFont = input_->font();
@@ -825,9 +835,40 @@ void ChatTab::saveAttachmentAs(const QString &path,
   }
 }
 
-void ChatTab::appendFile(const QString &, const QString &name,
+void ChatTab::appendFile(const QString &transferId, const QString &name,
                          const QString &path, const QString &mimeType,
                          bool received) {
+  const auto transfer = transfers_.take(transferId);
   log_->appendFile(!received, name, path, mimeType,
-                   QDateTime::currentDateTime());
+                   QDateTime::currentDateTime(), transfer.messageId);
+}
+
+void ChatTab::showTransferProgress(const QString &id, const QString &name,
+                                   bool outgoing, int percent) {
+  const auto peer = session_->peerName().isEmpty() ? lastPeerName_
+                                                   : session_->peerName();
+  const auto text =
+      outgoing ? tr("Uploading %1 to %2. %3%…").arg(name, peer).arg(percent)
+               : tr("Receiving %1 from %2. %3%…").arg(name, peer).arg(percent);
+  auto transfer = transfers_.find(id);
+  if (transfer == transfers_.end()) {
+    transfer = transfers_.insert(
+        id, {log_->appendMessage(outgoing, text, QDateTime::currentDateTime()),
+             name});
+  }
+  log_->setMessage(transfer->messageId, text, true, {});
+}
+
+void ChatTab::showTransferFailure(const QString &id, bool outgoing,
+                                  const QString &reason) {
+  const auto transfer = transfers_.take(id);
+  if (transfer.name.isEmpty()) return;
+  const auto peer = session_->peerName().isEmpty() ? lastPeerName_
+                                                   : session_->peerName();
+  log_->setMessage(transfer.messageId,
+                   outgoing ? tr("Could not send %1 to %2: %3")
+                                  .arg(transfer.name, peer, reason)
+                            : tr("Did not receive %1 from %2: %3")
+                                  .arg(transfer.name, peer, reason),
+                   true, {});
 }

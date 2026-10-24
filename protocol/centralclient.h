@@ -47,6 +47,9 @@ public:
   QString hostSpec() const;
   QString lastError() const;
   QList<Peer> peers() const;
+  // What the central host relays (CENTRAL_FILE_LIMIT), or -1 if it did not
+  // say.
+  qint64 maximumFileSize() const;
   // The connected client a conversation with address:port (and nickname, if
   // known) should go to. `address` may also be a nickname.
   std::optional<Peer> findPeer(const QString &address, quint16 port,
@@ -97,6 +100,7 @@ private:
   // and nickname, until start() is called again.
   bool replaced_ = false;
   QList<Peer> peers_;
+  qint64 maximumFileSize_ = -1;
   QHash<QString, QPointer<RelayTransport>> channels_;
 };
 
@@ -125,6 +129,7 @@ public:
   QString connectionKey(bool outgoing) const override;
   QString peerNickname() const;
   bool peerIsWebClient() const override;
+  qint64 maximumFileSize() const override;
 
 private:
   friend class CentralClient;

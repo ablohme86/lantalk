@@ -54,7 +54,12 @@ ChatLog::ChatLog(QWidget *parent) : QScrollArea(parent) {
   });
   connect(verticalScrollBar(), &QScrollBar::rangeChanged, this,
           [this](int, int maximum) {
-            if (followBottom_) verticalScrollBar()->setValue(maximum);
+            if (keepFromBottom_ >= 0) {
+              verticalScrollBar()->setValue(maximum - keepFromBottom_);
+              keepFromBottom_ = -1;
+            } else if (followBottom_) {
+              verticalScrollBar()->setValue(maximum);
+            }
           });
 }
 
@@ -63,7 +68,40 @@ int ChatLog::appendMessage(bool outgoing, const QString &message,
                            const QString &toolTip) {
   // Sending always brings the conversation back to the newest message.
   if (outgoing && !historical) followBottom_ = true;
-  auto *bubble = addBubble(outgoing, timestamp, historical);
+  return addMessage(outgoing, message, timestamp, historical, toolTip, -1);
+}
+
+void ChatLog::setEarlierMessagesAvailable(bool available) {
+  if (available == (earlierLink_ != nullptr)) return;
+  if (!available) {
+    rows_->removeWidget(earlierLink_);
+    earlierLink_->deleteLater();
+    earlierLink_ = nullptr;
+    return;
+  }
+  earlierLink_ = new QLabel(
+      QStringLiteral("<a href=\"earlier\">%1</a>").arg(tr("Show earlier messages")));
+  earlierLink_->setAlignment(Qt::AlignCenter);
+  earlierLink_->setContentsMargins(0, 4, 0, 4);
+  connect(earlierLink_, &QLabel::linkActivated, this,
+          &ChatLog::earlierMessagesRequested);
+  addRow(earlierLink_, tr("Show earlier messages"), 0);
+}
+
+void ChatLog::prependHistory(const QList<HistoryMessage> &messages) {
+  keepFromBottom_ =
+      verticalScrollBar()->maximum() - verticalScrollBar()->value();
+  int position = earlierLink_ ? 1 : 0;
+  for (const auto &message : messages) {
+    addMessage(message.outgoing, message.message, message.timestamp, true,
+               message.toolTip, position++);
+  }
+}
+
+int ChatLog::addMessage(bool outgoing, const QString &message,
+                        const QDateTime &timestamp, bool historical,
+                        const QString &toolTip, int position) {
+  auto *bubble = addBubble(outgoing, timestamp, historical, nullptr, position);
   bubble->setText(messageHtml(message, outgoing));
   bubble->setToolTip(toolTip);
   bubble->setProperty("plainText", plainMessage(message));
@@ -88,7 +126,7 @@ void ChatLog::setMessage(int id, const QString &message, bool pending,
 
 void ChatLog::appendFile(bool outgoing, const QString &name,
                          const QString &path, const QString &mimeType,
-                         const QDateTime &timestamp) {
+                         const QDateTime &timestamp, int replacing) {
   QLabel *thumbnail = nullptr;
   if (mimeType.startsWith(QStringLiteral("image/"))) {
     const QPixmap image(path);
@@ -105,7 +143,14 @@ void ChatLog::appendFile(bool outgoing, const QString &name,
     }
   }
   if (outgoing) followBottom_ = true;
-  auto *bubble = addBubble(outgoing, timestamp, false, thumbnail);
+  auto *replaced = messageRow(replacing);
+  auto *bubble = addBubble(outgoing, timestamp, false, thumbnail,
+                           replaced ? rows_->indexOf(replaced) : -1);
+  if (replaced) {
+    bubbles_.removeOne(messages_.take(replacing));
+    rows_->removeWidget(replaced);
+    replaced->deleteLater();
+  }
   auto html = QStringLiteral("📎 <i>%1</i>").arg(name.toHtmlEscaped());
   if (!outgoing) {
     html += QStringLiteral(" &nbsp;<a href=\"save\">%1</a>").arg(tr("Save as..."));
@@ -158,7 +203,7 @@ bool ChatLog::eventFilter(QObject *watched, QEvent *event) {
 }
 
 QLabel *ChatLog::addBubble(bool outgoing, const QDateTime &timestamp,
-                           bool historical, QWidget *below) {
+                           bool historical, QWidget *below, int position) {
   auto *bubble = new QLabel;
   bubble->setTextFormat(Qt::RichText);
   bubble->setWordWrap(true);
@@ -211,14 +256,21 @@ QLabel *ChatLog::addBubble(bool outgoing, const QDateTime &timestamp,
   rowLayout->addWidget(column);
   if (!outgoing) rowLayout->addStretch();
   // fitBubble() keeps the row's text for toPlainText() up to date.
-  addRow(row, {});
+  addRow(row, {}, position);
   return bubble;
 }
 
-void ChatLog::addRow(QWidget *row, const QString &plainText) {
+void ChatLog::addRow(QWidget *row, const QString &plainText, int position) {
   if (!plainText.isEmpty()) row->setProperty("plainText", plainText);
   // Before the trailing stretch, which keeps the rows at the top.
-  rows_->insertWidget(rows_->count() - 1, row);
+  rows_->insertWidget(position >= 0 ? position : rows_->count() - 1, row);
+}
+
+QWidget *ChatLog::messageRow(int id) const {
+  // bubble -> column -> row
+  auto *bubble = messages_.value(id);
+  auto *column = bubble ? bubble->parentWidget() : nullptr;
+  return column ? column->parentWidget() : nullptr;
 }
 
 void ChatLog::fitBubble(QLabel *bubble) const {

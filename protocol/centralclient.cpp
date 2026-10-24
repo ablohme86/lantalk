@@ -4,6 +4,7 @@
 #include "protocol/conversationidentity.h"
 
 #include <QHostAddress>
+#include <QLocale>
 #include <QUuid>
 
 #include <utility>
@@ -127,6 +128,8 @@ bool CentralClient::isReady() const { return ready_; }
 QString CentralClient::hostSpec() const { return hostSpec_; }
 
 QString CentralClient::lastError() const { return lastError_; }
+
+qint64 CentralClient::maximumFileSize() const { return maximumFileSize_; }
 
 QList<CentralClient::Peer> CentralClient::peers() const {
   return ready_ ? peers_ : QList<Peer>();
@@ -263,6 +266,25 @@ void CentralClient::processLine(const QString &line) {
     }
     peers_.append(peer);
     if (ready_) emit peersChanged();
+    return;
+  }
+  if (command == QStringLiteral("CENTRAL_FILE_LIMIT") && parts.size() == 2) {
+    bool valid = false;
+    const auto limit = parts.at(1).toLongLong(&valid);
+    maximumFileSize_ = valid && limit >= 0 ? limit : -1;
+    return;
+  }
+  if (command == QStringLiteral("CENTRAL_FILE_REJECTED") && parts.size() == 4) {
+    if (auto channel = channels_.value(parts.at(1))) {
+      const auto limit = parts.at(3).toLongLong();
+      emit channel->fileRefused(
+          parts.at(2),
+          limit == 0
+              ? QStringLiteral("The central host does not relay files.")
+              : QStringLiteral("The central host only relays files up to %1.")
+                    .arg(QLocale::c().formattedDataSize(
+                        limit, 0, QLocale::DataSizeTraditionalFormat)));
+    }
     return;
   }
   if (command == QStringLiteral("CENTRAL_PEER_KIND") && parts.size() == 3) {
@@ -543,3 +565,7 @@ QString RelayTransport::connectionKey(bool) const { return channelId_; }
 QString RelayTransport::peerNickname() const { return peer_.nickname; }
 
 bool RelayTransport::peerIsWebClient() const { return peer_.web; }
+
+qint64 RelayTransport::maximumFileSize() const {
+  return client_ ? client_->maximumFileSize() : -1;
+}

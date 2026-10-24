@@ -23,11 +23,30 @@
   turns the search off) and an Ollama address of the user's own.
 - LANTalk (GUI and TUI) shows web users as `Nickname (Web)` in the host
   list and on their tabs.
+- File transfers show as a bubble on both sides while they travel
+  ("Uploading <file> to <person>. 42%…" / "Receiving <file> from
+  <person>. 42%…"), which becomes the attachment when it arrives, in
+  LANTalk and on the web client. The chat input no longer shows the
+  progress and stays usable during an upload.
+- `lantalkd --max-file-size <MB>` limits the files it relays (default 50;
+  0 relays none). Clients refuse larger files at once, and `lantalkd`
+  stops them from older clients.
+- Chat history keeps every message instead of the last 500, in a file per
+  conversation (existing history moves there by itself). A reopened
+  conversation shows the last 200, and **Show earlier messages** loads 200
+  more at a time. The web client keeps up to 1000 messages per
+  conversation in the browser.
 
 ### Changed
 
 - While the other person has Live Translate on, your Live Translate button
   is disabled and says why, so only one side translates at a time.
+
+### Fixed
+
+- Messages LANTalk translated with Live Translate came back untranslated
+  from the history after a restart; the history now keeps the translation
+  and the original (GUI and TUI).
 
 ## v1.9.0 - 2026-10-24
 

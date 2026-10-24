@@ -174,6 +174,29 @@ private slots:
     QCOMPARE(copy.readAll(), contents);
   }
 
+  void fileSizeLimitIsAnnouncedAndApplied() {
+    CentralServer server;
+    server.setMaximumFileSize(10 * 1024);
+    QVERIFY(server.listen(QHostAddress::LocalHost, 0));
+    CentralPeer alice(QStringLiteral("alice"), server.serverPort());
+    CentralPeer bob(QStringLiteral("bob"), server.serverPort());
+    QTRY_VERIFY(hasPeer(alice.client(), QStringLiteral("bob")));
+    QCOMPARE(alice.client().maximumFileSize(), qint64(10 * 1024));
+    auto *outgoing = alice.connectTo(QStringLiteral("bob"));
+    QTRY_VERIFY(outgoing->isHandshakeComplete());
+    QCOMPARE(outgoing->maximumFileSize(), qint64(10 * 1024));
+
+    QTemporaryDir directory;
+    QFile file(directory.filePath(QStringLiteral("big.bin")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QByteArray(20 * 1024, 'x'));
+    file.close();
+    QSignalSpy status(outgoing, &ChatSession::statusChanged);
+    QVERIFY(!outgoing->sendFile(file.fileName()));
+    QCOMPARE(status.last().first().toString(),
+             QStringLiteral("Files larger than 10 kB cannot be sent."));
+  }
+
   void conversationEndsWhenThePeerLeaves() {
     CentralServer server;
     QVERIFY(server.listen(QHostAddress::LocalHost, 0));

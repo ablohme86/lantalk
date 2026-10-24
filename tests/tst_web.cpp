@@ -322,6 +322,63 @@ private slots:
     QCOMPARE(ollama.translatedTexts(), QStringList{QStringLiteral("Hei")});
   }
 
+  void serverRefusesFilesOverTheLimit() {
+    CentralServer central;
+    central.setMaximumFileSize(1000);
+    QVERIFY(central.listen(QHostAddress::LocalHost, 0));
+    WebServer web(&central);
+    QVERIFY(web.listen(QHostAddress::LocalHost, 0));
+    ConnectionRegistry registry;
+    QObject owner;
+    QList<ChatSession *> incoming;
+    CentralClient alice;
+    QObject::connect(&alice, &CentralClient::incomingConnection, &owner,
+                     [&](RelayTransport *transport) {
+                       auto *session = new ChatSession(transport, &owner, &registry);
+                       session->beginHandshake(QStringLiteral("alice"));
+                       incoming.append(session);
+                     });
+    alice.start(QStringLiteral("127.0.0.1:%1").arg(central.serverPort()),
+                QStringLiteral("alice"), DefaultPort);
+    QTRY_VERIFY(alice.isReady());
+
+    // A client that ignores CENTRAL_FILE_LIMIT, like an older LANTalk.
+    WebPeer phone(web.serverPort());
+    signIn(phone, QStringLiteral("mia"));
+    QCOMPARE(phone.lineStartingWith(QStringLiteral("CENTRAL_FILE_LIMIT ")),
+             QStringLiteral("CENTRAL_FILE_LIMIT 1000"));
+    const auto aliceId =
+        phone.lineStartingWith(QStringLiteral("CENTRAL_PEER ")).section(u' ', 1, 1);
+    phone.send("CENTRAL_OPEN f-1 " + aliceId.toLatin1());
+    phone.send("CENTRAL_DATA f-1 NICKNAME mia");
+    QTRY_COMPARE(incoming.size(), 1);
+    QTRY_VERIFY(incoming.first()->isHandshakeComplete());
+    QSignalSpy progress(incoming.first(), &ChatSession::fileTransferProgress);
+    QSignalSpy received(incoming.first(), &ChatSession::messageReceived);
+
+    const auto field = [](const QByteArray &value) {
+      return value.toBase64(QByteArray::Base64UrlEncoding);
+    };
+    phone.send("CENTRAL_DATA f-1 FILE_BEGIN big " + field("big.bin") + ' ' +
+               field("application/octet-stream") + " 2000");
+    phone.send("CENTRAL_DATA f-1 FILE_CHUNK big " + field(QByteArray(2000, 'x')));
+    phone.send(QByteArray("CENTRAL_DATA f-1 FILE_END big"));
+    // A file within the limit, then a message, still get through.
+    phone.send("CENTRAL_DATA f-1 FILE_BEGIN small " + field("small.txt") + ' ' +
+               field("text/plain") + " 5");
+    phone.send("CENTRAL_DATA f-1 FILE_CHUNK small " + field("hello"));
+    phone.send(QByteArray("CENTRAL_DATA f-1 FILE_END small"));
+    phone.send("CENTRAL_DATA f-1 MESSAGE " + field("done"));
+    QTRY_COMPARE(received.size(), 1);
+    QTRY_VERIFY(!phone.lineStartingWith(
+                          QStringLiteral("CENTRAL_FILE_REJECTED f-1 big 1000"))
+                     .isEmpty());
+    for (const auto &event : progress) {
+      QCOMPARE(event.first().toString(), QStringLiteral("small"));
+    }
+    QVERIFY(!progress.isEmpty());
+  }
+
   void wrongPasswordIsRejected() {
     CentralServer central;
     central.setPassword(QStringLiteral("hemmelig"));

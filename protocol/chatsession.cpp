@@ -7,6 +7,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QLocale>
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QMimeDatabase>
@@ -74,6 +75,19 @@ void ChatSession::setupSocket() {
   connect(transport_, &ChatTransport::disconnected, this, [this] {
     notifyDisconnected();
   });
+  connect(transport_, &ChatTransport::fileRefused, this,
+          [this](const QString &fileId, const QString &reason) {
+            if (fileId != outgoingFileId_ || !outgoingFile_) return;
+            outgoingFilePump_.stop();
+            outgoingFile_->close();
+            outgoingFile_->deleteLater();
+            outgoingFile_ = nullptr;
+            outgoingFileId_.clear();
+            outgoingFilePercent_ = -1;
+            emit statusChanged(reason);
+            emit fileTransferFailed(fileId, true, reason);
+            startNextFile();
+          });
   connect(transport_, &ChatTransport::errorOccurred, this, [this] {
     emit statusChanged(transport_->errorString());
     if (transport_->state() == ChatTransport::State::Unconnected) {
@@ -145,6 +159,10 @@ void ChatSession::resetConnectionState() {
   translationActive_ = false;
   peerTranslationActive_ = false;
   translationRequestId_.clear();
+  for (auto file = incomingFiles_.cbegin(); file != incomingFiles_.cend(); ++file) {
+    emit fileTransferFailed(file.key(), false,
+                            QStringLiteral("The connection closed."));
+  }
   incomingFiles_.clear();
   disconnectNotified_ = false;
   peerSupportsTyping_ = false;
@@ -203,6 +221,20 @@ void ChatSession::sendMessage(const QString &message,
   if (localTyping_) sendLine(QStringLiteral("TYPING START"));
 }
 
+qint64 ChatSession::maximumFileSize() const {
+  const auto routeLimit = transport_->maximumFileSize();
+  return routeLimit < 0 ? MaximumFileSize : qMin(routeLimit, MaximumFileSize);
+}
+
+QString ChatSession::fileTooLargeMessage() const {
+  const auto limit = maximumFileSize();
+  return limit == 0
+             ? QStringLiteral("The central host does not relay files.")
+             : QStringLiteral("Files larger than %1 cannot be sent.")
+                   .arg(QLocale::c().formattedDataSize(
+                       limit, 0, QLocale::DataSizeTraditionalFormat));
+}
+
 bool ChatSession::sendFile(const QString &filePath) {
   if (!handshakeComplete_) {
     emit statusChanged(QStringLiteral("Waiting for the nickname handshake."));
@@ -214,17 +246,13 @@ bool ChatSession::sendFile(const QString &filePath) {
         QStringLiteral("Cannot read %1.").arg(QFileInfo(filePath).fileName()));
     return false;
   }
-  if (file.size() > MaximumFileSize) {
-    emit statusChanged(
-        QStringLiteral("Files larger than 50 MB cannot be sent."));
+  if (file.size() > maximumFileSize()) {
+    emit statusChanged(fileTooLargeMessage());
     return false;
   }
   file.close();
 
   outgoingFilePaths_.enqueue(filePath);
-  if (!outgoingFileBatchActive_) {
-    outgoingFileBatchActive_ = true;
-  }
   startNextFile();
   return true;
 }
@@ -242,9 +270,8 @@ void ChatSession::startNextFile() {
       file->deleteLater();
       continue;
     }
-    if (file->size() > MaximumFileSize) {
-      emit statusChanged(
-          QStringLiteral("Files larger than 50 MB cannot be sent."));
+    if (file->size() > maximumFileSize()) {
+      emit statusChanged(fileTooLargeMessage());
       file->deleteLater();
       continue;
     }
@@ -264,14 +291,10 @@ void ChatSession::startNextFile() {
                  .arg(outgoingFileId_, QString::fromLatin1(encodedName),
                       QString::fromLatin1(encodedMime))
                  .arg(outgoingFileSize_));
-    emit fileSendProgressChanged(0);
+    outgoingFilePercent_ = 0;
+    emit fileTransferProgress(outgoingFileId_, outgoingFileName_, true, 0);
     outgoingFilePump_.start(20);
     return;
-  }
-
-  if (outgoingFileBatchActive_) {
-    outgoingFileBatchActive_ = false;
-    emit fileSendCompleted();
   }
 }
 
@@ -286,6 +309,7 @@ void ChatSession::sendNextFileChunk() {
 
   if (outgoingFile_->atEnd()) {
     sendLine(QStringLiteral("FILE_END %1").arg(outgoingFileId_));
+    const auto id = outgoingFileId_;
     const auto name = outgoingFileName_;
     const auto path = outgoingFilePath_;
     const auto mimeType = outgoingMimeType_;
@@ -298,8 +322,9 @@ void ChatSession::sendNextFileChunk() {
     outgoingMimeType_.clear();
     outgoingFileSize_ = 0;
     outgoingBytesSent_ = 0;
-    emit fileSendProgressChanged(100);
-    emit fileSent(name, path, mimeType);
+    if (outgoingFilePercent_ < 100) emit fileTransferProgress(id, name, true, 100);
+    outgoingFilePercent_ = -1;
+    emit fileSent(name, path, mimeType, id);
     startNextFile();
     return;
   }
@@ -316,6 +341,9 @@ void ChatSession::sendNextFileChunk() {
     }
     emit statusChanged(QStringLiteral("Cannot read %1.").arg(outgoingFileName_));
     sendLine(QStringLiteral("FILE_END %1").arg(outgoingFileId_));
+    emit fileTransferFailed(outgoingFileId_, true,
+                            QStringLiteral("Cannot read %1.").arg(outgoingFileName_));
+    outgoingFilePercent_ = -1;
     outgoingFile_->close();
     outgoingFile_->deleteLater();
     outgoingFile_ = nullptr;
@@ -337,12 +365,21 @@ void ChatSession::sendNextFileChunk() {
                           ? 100
                           : static_cast<int>(outgoingBytesSent_ * 100 /
                                              outgoingFileSize_);
-  emit fileSendProgressChanged(qMin(percent, 100));
+  if (percent != outgoingFilePercent_) {
+    outgoingFilePercent_ = qMin(percent, 100);
+    emit fileTransferProgress(outgoingFileId_, outgoingFileName_, true,
+                              outgoingFilePercent_);
+  }
   outgoingFilePump_.start(0);
 }
 
 void ChatSession::cancelOutgoingFiles() {
   outgoingFilePump_.stop();
+  if (!outgoingFileId_.isEmpty()) {
+    emit fileTransferFailed(outgoingFileId_, true,
+                            QStringLiteral("The connection closed."));
+  }
+  outgoingFilePercent_ = -1;
   if (outgoingFile_) {
     outgoingFile_->close();
     outgoingFile_->deleteLater();
@@ -355,10 +392,6 @@ void ChatSession::cancelOutgoingFiles() {
   outgoingMimeType_.clear();
   outgoingFileSize_ = 0;
   outgoingBytesSent_ = 0;
-  if (outgoingFileBatchActive_) {
-    outgoingFileBatchActive_ = false;
-    emit fileSendCompleted();
-  }
 }
 
 void ChatSession::requestLiveTranslation(const QString &sourceLanguage,
@@ -681,6 +714,7 @@ void ChatSession::processLine(const QString &line) {
     incomingFiles_.insert(
         parts.at(1),
         {safeName, QString::fromUtf8(mime), size, {}});
+    emit fileTransferProgress(parts.at(1), safeName, false, 0);
     return;
   }
   if (parts.value(0) == QStringLiteral("FILE_CHUNK") && parts.size() == 3 &&
@@ -695,9 +729,16 @@ void ChatSession::processLine(const QString &line) {
         transfer->data.size() + chunk.size() > transfer->size) {
       incomingFiles_.erase(transfer);
       emit statusChanged(QStringLiteral("Rejected invalid file data."));
+      emit fileTransferFailed(parts.at(1), false,
+                              QStringLiteral("Rejected invalid file data."));
       return;
     }
     transfer->data.append(chunk);
+    const int percent = int(transfer->data.size() * 100 / transfer->size);
+    if (percent != transfer->percent) {
+      transfer->percent = percent;
+      emit fileTransferProgress(parts.at(1), transfer->name, false, percent);
+    }
     return;
   }
   if (parts.value(0) == QStringLiteral("FILE_END") && parts.size() == 2 &&
@@ -708,26 +749,29 @@ void ChatSession::processLine(const QString &line) {
     }
     const auto completed = *transfer;
     incomingFiles_.erase(transfer);
+    const auto fail = [this, &parts](const QString &reason) {
+      emit statusChanged(reason);
+      emit fileTransferFailed(parts.at(1), false, reason);
+    };
     if (completed.data.size() != completed.size) {
-      emit statusChanged(QStringLiteral("File transfer was incomplete."));
+      fail(QStringLiteral("File transfer was incomplete."));
       return;
     }
     const auto cacheDirectory =
         QStandardPaths::writableLocation(QStandardPaths::CacheLocation);
     if (cacheDirectory.isEmpty()) {
-      emit statusChanged(QStringLiteral("Cannot locate the LANTalk cache folder."));
+      fail(QStringLiteral("Cannot locate the LANTalk cache folder."));
       return;
     }
     const auto directory = QDir(cacheDirectory).filePath(QStringLiteral("received"));
     if (!QDir().mkpath(directory)) {
-      emit statusChanged(
-          QStringLiteral("Cannot create the LANTalk cache folder."));
+      fail(QStringLiteral("Cannot create the LANTalk cache folder."));
       return;
     }
     const auto safeName = QFileInfo(completed.name).fileName();
     if (safeName.isEmpty() || safeName == QStringLiteral(".") ||
         safeName == QStringLiteral("..")) {
-      emit statusChanged(QStringLiteral("Received file has an invalid name."));
+      fail(QStringLiteral("Received file has an invalid name."));
       return;
     }
     const auto destination =
@@ -739,11 +783,11 @@ void ChatSession::processLine(const QString &line) {
         destinationFile.write(completed.data) != completed.data.size()) {
       destinationFile.close();
       QFile::remove(destination);
-      emit statusChanged(QStringLiteral("Cannot save received file."));
+      fail(QStringLiteral("Cannot save received file."));
       return;
     }
     receivedFilePaths_.append(destination);
-    emit fileReceived(completed.name, destination, completed.mimeType);
+    emit fileReceived(completed.name, destination, completed.mimeType, parts.at(1));
     return;
   }
   emit statusChanged(

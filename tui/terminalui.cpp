@@ -1100,17 +1100,18 @@ void TerminalUi::addSession(ChatSession *session, const QString &title)
     connect(conversation.translation, &TranslationRestorer::statusChanged, this,
             &TerminalUi::setStatus);
     connect(session, &ChatSession::messageReceived, this,
-            [this, session](const QString &message, const QString &) {
+            [this, session](const QString &message, const QString &originalMessage) {
                 const int index = conversationIndex(session);
                 if (index < 0) return;
                 const auto timestamp = QDateTime::currentDateTime();
                 if (index != currentConversation_) {
                     conversations_[index].unread = true;
                 }
+                // A message translated here is stored once translated.
                 ChatHistory::append(session->peerAddress(), session->peerName(),
-                                    session->peerName(), message, timestamp);
+                                    session->peerName(), message, timestamp, originalMessage);
                 const auto &conversation = conversations_.at(index);
-                if (!conversation.liveTranslate) {
+                if (!conversation.liveTranslate || !originalMessage.isEmpty()) {
                     appendTranscript(index,
                                      ChatHistory::timestampPrefix(timestamp) +
                                          QStringLiteral("%1: %2")
@@ -1125,9 +1126,12 @@ void TerminalUi::addSession(ChatSession *session, const QString &title)
                 ++pendingIncomingTranslations_;
                 setStatus(QStringLiteral("Translating incoming message... Stand by."));
                 connect(translator, &MessageTranslator::translated, this,
-                        [this, safeSession, translator, timestamp](const QString &translation,
-                                                                   const QString &) {
+                        [this, safeSession, translator, timestamp, message](const QString &translation,
+                                                                            const QString &) {
                             if (safeSession) {
+                                ChatHistory::replace(safeSession->peerAddress(), safeSession->peerName(),
+                                                     safeSession->peerName(), timestamp, translation,
+                                                     message);
                                 const int conversation = conversationIndex(safeSession);
                                 if (conversation >= 0) {
                                     appendTranscript(conversation,
@@ -1360,7 +1364,7 @@ void TerminalUi::sendChatMessage(const QString &text)
                                                  .arg(originalMessage));
                         ChatHistory::append(
                             session->peerAddress(), session->peerName(),
-                            QStringLiteral("You"), originalMessage, timestamp);
+                            QStringLiteral("You"), originalMessage, timestamp, translation);
                     }
                 }
                 --pendingOutgoingTranslations_;
@@ -1449,8 +1453,9 @@ void TerminalUi::loadConversationHistory(int index)
     conversation.historyLoaded = true;
     conversation.transcript.clear();
 
+    // As much as the transcript keeps.
     const auto entries = ChatHistory::load(conversation.session->peerAddress(),
-                                           conversation.session->peerName(), 20);
+                                           conversation.session->peerName(), 200);
     for (const auto &entry : entries) {
         for (const auto &part : transcriptLines(ChatHistory::timestampPrefix(entry.timestamp)
                                                 + QStringLiteral("%1: %2").arg(entry.sender, entry.message))) {

@@ -87,8 +87,12 @@ chat input, connection tabs, and menu. Use the arrow keys to navigate and
 `Enter` to connect, activate a tab, open the focused top menu, or send. At the
 top menu, left/right selects `Chat` or `Settings` before you press `Enter`.
 GUI and TUI share chat history for peers with the same IP address and nickname.
-When a conversation is reopened, its 20 newest earlier messages appear in
-italics above an `Earlier messages` divider.
+The whole history is kept, one file per conversation in LANTalk's app data
+folder. When a conversation is reopened, its 200 newest earlier messages
+appear in italics above an `Earlier messages` divider, and `Show earlier
+messages` at the top of the GUI's conversation brings back 200 more at a
+time. Translated messages are kept translated, with the original (or, for
+your own, the translation you sent) on hover as during the conversation.
 In the TUI, a reconnect from the same IP and nickname resumes the existing
 disconnected tab; press `Ctrl-W` to close and disconnect the active chat.
 The TUI has an MS-DOS Edit style menu bar. Press `Alt-C` for the Chat menu
@@ -116,8 +120,10 @@ Drop images or files into a conversation to send them to the connected host.
 Image thumbnails appear in the chat log and open in an in-chat viewer when
 clicked. Received attachments are kept in LANTalk's operating-system cache
 until that conversation is closed. Use the `Save as...` link beside any
-attachment to copy it to a chosen location. File transfers show progress in the
-chat input, and launching LANTalk again activates the running instance.
+attachment to copy it to a chosen location. While a file travels, both sides
+see it as a bubble with its progress ("Uploading notes.pdf to Bob. 42%…" and
+"Receiving notes.pdf from Alice. 42%…") that turns into the attachment when
+it arrives. Launching LANTalk again activates the running instance.
 
 ## Central host
 
@@ -167,6 +173,13 @@ settings change. Clients keep the password in their LANTalk settings in
 plain text.
 
 It logs sign-ins, sign-outs, and refused sign-ins, never message contents.
+
+`--max-file-size <MB>` limits the files `lantalkd` relays (default 50, the
+most LANTalk accepts; `0` relays none). Clients learn the limit when they
+sign in and refuse larger files at once; `lantalkd` also stops larger
+transfers itself, so older clients cannot get around it (they will think
+the file went out, though). This is the one place where `lantalkd` looks at
+the relayed conversation, and only at `FILE_` lines.
 
 ### Web client
 
@@ -271,7 +284,9 @@ followed by `CENTRAL_WELCOME <id> <address>`. After that the service reports
 `CENTRAL_OPEN <channel> <peer id>` opens a conversation (the peer gets
 `CENTRAL_INCOMING <channel> <id>` and the opener `CENTRAL_OPENED <channel>`).
 A web client is followed by `CENTRAL_PEER_KIND <id> web`, which older
-clients ignore. `CENTRAL_OLLAMA`, `CENTRAL_OLLAMA_SCAN`, `CENTRAL_TRANSLATE`,
+clients ignore. After the welcome, `CENTRAL_FILE_LIMIT <bytes>` gives the
+file size limit, and a refused transfer is answered with
+`CENTRAL_FILE_REJECTED <channel> <file id> <bytes>`. `CENTRAL_OLLAMA`, `CENTRAL_OLLAMA_SCAN`, `CENTRAL_TRANSLATE`,
 `CENTRAL_TRANSLATED`, and `CENTRAL_TRANSLATE_FAILED` carry the web client's
 Live Translate (see `central/translationservice.h`).
 `CENTRAL_DATA <channel> <line>` carries one unchanged LANCHAT PROTOCOL line,

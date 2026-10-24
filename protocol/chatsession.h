@@ -40,6 +40,8 @@ public:
   void setRemoteEndpoint(const QString &address, quint16 port);
   void sendMessage(const QString &message, const QString &originalMessage = {});
   bool sendFile(const QString &filePath);
+  // LANTalk's own limit, or the central host's when it is lower.
+  qint64 maximumFileSize() const;
   void requestLiveTranslation(const QString &sourceLanguage,
                               const QString &targetLanguage);
   void stopLiveTranslation();
@@ -69,12 +71,17 @@ public:
 signals:
   void peerIdentified(const QString &name);
   void messageReceived(const QString &message, const QString &originalMessage);
+  // `id` names the transfer in fileTransferProgress().
   void fileSent(const QString &name, const QString &path,
-                const QString &mimeType);
+                const QString &mimeType, const QString &id);
   void fileReceived(const QString &name, const QString &path,
-                    const QString &mimeType);
-  void fileSendProgressChanged(int percent);
-  void fileSendCompleted();
+                    const QString &mimeType, const QString &id);
+  // A transfer started (0) or moved on, in whole percents; fileSent() or
+  // fileReceived() ends it, or fileTransferFailed().
+  void fileTransferProgress(const QString &id, const QString &name,
+                            bool outgoing, int percent);
+  void fileTransferFailed(const QString &id, bool outgoing,
+                          const QString &reason);
   void liveTranslationGranted();
   void liveTranslationDenied(const QString &message);
   void peerLiveTranslationChanged(bool active, const QString &sourceLanguage,
@@ -95,6 +102,7 @@ private:
   friend class ConnectionRegistry;
 
   void processLine(const QString &line);
+  QString fileTooLargeMessage() const;
   void sendLine(const QString &line);
   void startNextFile();
   void cancelOutgoingFiles();
@@ -113,6 +121,7 @@ private:
     QString mimeType;
     qint64 size;
     QByteArray data;
+    int percent = 0;
   };
 
   ConnectionRegistry *registry_;
@@ -144,7 +153,7 @@ private:
   QString outgoingMimeType_;
   qint64 outgoingFileSize_ = 0;
   qint64 outgoingBytesSent_ = 0;
-  bool outgoingFileBatchActive_ = false;
+  int outgoingFilePercent_ = -1;
   bool disconnectNotified_ = false;
   bool peerSupportsTyping_ = false;
   bool localTyping_ = false;
