@@ -47,7 +47,7 @@ class ChatImagePreviewWidget final : public QWidget {
 public:
   explicit ChatImagePreviewWidget(QWidget *parent = nullptr)
       : QWidget(parent), imageLabel_(new QLabel(this)),
-        closeButton_(new QPushButton(QStringLiteral("Close"), this)) {
+        closeButton_(new QPushButton(tr("Close"), this)) {
     setStyleSheet(QStringLiteral("background-color: #111; color: white;"));
 
     auto *layout = new QVBoxLayout(this);
@@ -92,7 +92,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     : QWidget(parent), session_(session) {
   setAcceptDrops(true);
   auto *layout = new QVBoxLayout(this);
-  status_ = new QLabel(QStringLiteral("Performing nickname handshake…"), this);
+  status_ = new QLabel(tr("Performing nickname handshake…"), this);
   viewStack_ = new QStackedWidget(this);
   log_ = new ChatLog(this);
   imageViewer_ = new ChatImagePreviewWidget(this);
@@ -111,8 +111,8 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   auto *controls = new QHBoxLayout;
   input_ = new ChatInput(this);
   input_->setPlaceholderText(
-      QStringLiteral("Message (Shift+Enter for a new line)"));
-  translateButton_ = new QPushButton(QStringLiteral("Live Translate"), this);
+      tr("Message (Shift+Enter for a new line)"));
+  translateButton_ = new QPushButton(tr("Live Translate"), this);
   translateButton_->setCheckable(true);
   reconnectTimer_ = new QTimer(this);
   reconnectTimer_->setInterval(10000);
@@ -121,8 +121,8 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
   separator->setFrameShadow(QFrame::Sunken);
   auto *attach = new QPushButton(this);
   attach->setIcon(style()->standardIcon(QStyle::SP_DialogOpenButton));
-  attach->setToolTip(QStringLiteral("Attach file"));
-  attach->setAccessibleName(QStringLiteral("Attach file"));
+  attach->setToolTip(tr("Attach file"));
+  attach->setAccessibleName(tr("Attach file"));
   controls->addWidget(input_);
   controls->addWidget(translateButton_);
   controls->addWidget(separator);
@@ -142,7 +142,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
 
   connect(attach, &QPushButton::clicked, this, [this] {
     const auto path = QFileDialog::getOpenFileName(
-        this, QStringLiteral("Open file"));
+        this, tr("Open file"));
     if (!path.isEmpty()) {
       session_->sendFile(path);
     }
@@ -166,7 +166,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       automaticTranslationRequest_ = false;
       updateQuoteTranslation();
       translationRestorer_->disable();
-      status_->setText(QStringLiteral("Live Translate is off."));
+      status_->setText(tr("Live Translate is off."));
     }
   });
   connect(translationRestorer_, &TranslationRestorer::resumeRequested, this,
@@ -174,7 +174,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
             myLanguage_ = myLanguage;
             peerLanguage_ = peerLanguage;
             automaticTranslationRequest_ = true;
-            status_->setText(QStringLiteral("Resuming Live Translate…"));
+            status_->setText(tr("Resuming Live Translate…"));
           });
   connect(translationRestorer_, &TranslationRestorer::statusChanged, status_,
           &QLabel::setText);
@@ -188,7 +188,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
               loadConversationHistory();
             }
             if (!connected_) {
-              appendSystemMessage(QStringLiteral("Connected to %1").arg(name));
+              appendSystemMessage(tr("Connected to %1").arg(name));
             }
             connected_ = true;
             reconnectTimer_->stop();
@@ -198,7 +198,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
             inputFont.setItalic(false);
             input_->setFont(inputFont);
             input_->setEnabled(true);
-            status_->setText(QStringLiteral("Connected to %1").arg(name));
+            status_->setText(tr("Connected to %1").arg(name));
             emit titleChanged();
           });
   connect(log_, &ChatLog::saveAttachmentRequested, this,
@@ -225,7 +225,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
         appendFile(session_->peerName(), name, path, mime, true);
         emit incomingMessageReceived();
         emit notifyIncoming(session_->peerName(),
-                            QStringLiteral("Sent a file: %1").arg(name));
+                            tr("Sent a file: %1").arg(name));
       });
   connect(session_, &ChatSession::fileSendProgressChanged, this,
           [this](int percent) {
@@ -233,7 +233,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
               fileSendPreviousInput_ = outgoingPending_ ? QString() : input_->text();
               fileSendUiActive_ = true;
             }
-            input_->setText(QStringLiteral("Sending file... Please wait... %1%")
+            input_->setText(tr("Sending file... Please wait... %1%")
                                 .arg(percent));
             input_->setReadOnly(true);
             auto font = input_->font();
@@ -244,7 +244,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
     if (!fileSendUiActive_) return;
     fileSendUiActive_ = false;
     if (outgoingPending_) {
-      input_->setText(QStringLiteral("Translating message..."));
+      input_->setText(tr("Translating message..."));
       input_->setReadOnly(true);
       auto font = input_->font();
       font.setItalic(true);
@@ -267,7 +267,7 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       const QSignalBlocker blocker(translateButton_);
       translateButton_->setChecked(true);
     }
-    status_->setText(QStringLiteral("Live Translate: %1 ↔ %2")
+    status_->setText(tr("Live Translate: %1 ↔ %2")
                          .arg(myLanguage_, peerLanguage_));
     translatePendingIncomingMessages();
   });
@@ -279,12 +279,12 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
             translateButton_->setChecked(false);
             if (std::exchange(automaticTranslationRequest_, false)) {
               status_->setText(
-                  QStringLiteral("Live Translate was not resumed: %1")
+                  tr("Live Translate was not resumed: %1")
                       .arg(message));
               return;
             }
             QMessageBox::warning(
-                this, QStringLiteral("Live Translate unavailable"), message);
+                this, tr("Live Translate unavailable"), message);
           });
   connect(
       session_, &ChatSession::peerLiveTranslationChanged, this,
@@ -293,18 +293,19 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
         // The peer translates from its language (source) into ours
         // (target); we read the pair from our side: ours first.
         status_->setText(
-            active ? QStringLiteral("%1 enabled Live Translate (%2 → %3).")
+            active ? tr("%1 enabled Live Translate (%2 → %3).")
                          .arg(session_->peerName(), targetLanguage,
                               sourceLanguage)
-                   : QStringLiteral("%1 disabled Live Translate.")
+                   : tr("%1 disabled Live Translate.")
                          .arg(session_->peerName()));
+        setPeerTranslating(active);
       });
   connect(session_, &ChatSession::disconnected, this, [this] {
     if (connected_) {
       const auto peer = session_->peerName().isEmpty()
                             ? reconnectAddress_
                             : session_->peerName();
-      appendSystemMessage(QStringLiteral("Disconnected from %1").arg(peer));
+      appendSystemMessage(tr("Disconnected from %1").arg(peer));
     }
     connected_ = false;
     if (hasPeerIdentity_) emit titleChanged();
@@ -315,11 +316,12 @@ ChatTab::ChatTab(ChatSession *session, QWidget *parent)
       const QSignalBlocker blocker(translateButton_);
       translateButton_->setChecked(false);
     }
+    setPeerTranslating(false);
     status_->setText(reconnectAddress_.isEmpty()
-                         ? QStringLiteral("Disconnected")
-                         : QStringLiteral("Disconnected; retrying in 10 seconds"));
+                         ? tr("Disconnected")
+                         : tr("Disconnected; retrying in 10 seconds"));
     input_->setText(
-        QStringLiteral("Re-connect to this host to start chatting"));
+        tr("Re-connect to this host to start chatting"));
     input_->setReadOnly(true);
     auto inputFont = input_->font();
     inputFont.setItalic(true);
@@ -355,11 +357,13 @@ QString ChatTab::title() const {
   const auto peer = currentPeer.isEmpty() ? lastPeerName_ : currentPeer;
   const auto address = session_->peerAddress();
   if (hasPeerIdentity_ && !connected_) {
-    return QStringLiteral("%1 (Disconnected)").arg(peer);
+    return tr("%1 (Disconnected)").arg(peer);
   }
   if (peer.isEmpty()) {
-    return address.isEmpty() ? QStringLiteral("Unknown host") : address;
+    return address.isEmpty() ? tr("Unknown host") : address;
   }
+  // A phone's address says little; that it is the web client says more.
+  if (session_->peerIsWebClient()) return tr("%1 (Web)").arg(peer);
   return address.isEmpty() ? peer
                            : QStringLiteral("%1 (%2)").arg(peer, address);
 }
@@ -381,7 +385,7 @@ void ChatTab::restartConnection() {
   if (reconnectAddress_.isEmpty() || reconnectPort_ == 0) return;
   reconnectTimer_->stop();
   session_->reconnectToHost(reconnectAddress_, reconnectPort_);
-  status_->setText(QStringLiteral("Reconnecting to %1…")
+  status_->setText(tr("Reconnecting to %1…")
                        .arg(reconnectAddress_));
 }
 
@@ -409,7 +413,7 @@ void ChatTab::updateTypingIndicator() {
   const auto dots = QString(typingAnimationFrame_, u'.')
                         .leftJustified(3, QChar(0x2007));
   typingIndicator_->setText(
-      QStringLiteral("%1 is typing a message%2").arg(peer, dots));
+      tr("%1 is typing a message%2").arg(peer, dots));
   typingIndicator_->show();
   if (!typingAnimation_->isActive()) typingAnimation_->start();
 }
@@ -430,9 +434,8 @@ QString trimmedQuote(QString text) {
 
 QString quoteSummary(const QString &text) {
   const int lines = int(text.count(u'\n')) + 1;
-  return QStringLiteral("Quote · %1 line%2")
-      .arg(lines)
-      .arg(lines == 1 ? QString() : QStringLiteral("s"));
+  return lines == 1 ? ChatTab::tr("Quote · 1 line")
+                    : ChatTab::tr("Quote · %1 lines").arg(lines);
 }
 
 } // namespace
@@ -449,13 +452,13 @@ void ChatTab::addQuote(const QString &pastedText) {
   cardLayout->setSpacing(2);
   auto *header = new QHBoxLayout;
   auto *summary = new QLabel(quoteSummary(text), card);
-  auto *translate = new QCheckBox(QStringLiteral("Translate quote"), card);
-  translate->setToolTip(QStringLiteral(
-      "Translate this quote too; otherwise it is sent as it is."));
+  auto *translate = new QCheckBox(tr("Translate quote"), card);
+  translate->setToolTip(
+      tr("Translate this quote too; otherwise it is sent as it is."));
   auto *remove = new QToolButton(card);
   remove->setText(QStringLiteral("✕"));
   remove->setAutoRaise(true);
-  remove->setToolTip(QStringLiteral("Remove this quote"));
+  remove->setToolTip(tr("Remove this quote"));
   header->addWidget(summary, 1);
   header->addWidget(translate);
   header->addWidget(remove);
@@ -524,7 +527,7 @@ void ChatTab::retryConnection() {
   if (connected_ || reconnectAddress_.isEmpty() || reconnectPort_ == 0) {
     return;
   }
-  status_->setText(QStringLiteral("Reconnecting to %1…")
+  status_->setText(tr("Reconnecting to %1…")
                        .arg(reconnectAddress_));
   session_->reconnectToHost(reconnectAddress_, reconnectPort_);
 }
@@ -552,6 +555,15 @@ void ChatTab::refreshTranslationAvailability() {
   }
   translateButton_->setVisible(available);
   if (available) translationRestorer_->retry();
+}
+
+void ChatTab::setPeerTranslating(bool active) {
+  translateButton_->setEnabled(!active);
+  translateButton_->setToolTip(
+      active ? tr("%1 is using Live Translate. Only one of you can translate "
+                  "at a time.")
+                   .arg(session_->peerName())
+             : QString());
 }
 
 void ChatTab::configureTranslation() {
@@ -614,7 +626,7 @@ void ChatTab::send() {
   text = draft;
   outgoingPending_ = true;
   pendingOriginal_ = QuotedMessage::withoutTranslateFlags(draft);
-  input_->setText(QStringLiteral("Translating message..."));
+  input_->setText(tr("Translating message..."));
   input_->setReadOnly(true);
   auto inputFont = input_->font();
   inputFont.setItalic(true);
@@ -626,7 +638,7 @@ void ChatTab::received(const QString &message, const QString &originalMessage) {
   const auto timestamp = QDateTime::currentDateTime();
   const int messageId = appendMessage(session_->peerName(), message,
                                     originalMessage,
-                                    QStringLiteral("Original"), false,
+                                    tr("Original"), false,
                                     timestamp);
   ChatHistory::append(session_->peerAddress(), session_->peerName(),
                       session_->peerName(), message, timestamp);
@@ -657,7 +669,7 @@ void ChatTab::translateIncomingMessage(int index) {
 
   incoming.pending = true;
   setIncomingMessageText(incoming,
-                         QStringLiteral("Translating incoming message..."),
+                         tr("Translating incoming message..."),
                          false, true);
   incomingTranslator_.translate(incoming.originalMessage, peerLanguage_,
                                 myLanguage_);
@@ -670,7 +682,7 @@ void ChatTab::outgoingTranslationFinished(const QString &translation,
   const auto timestamp = QDateTime::currentDateTime();
   session_->sendMessage(translation, pendingOriginal_);
   appendMessage(QStringLiteral("You"), pendingOriginal_, translation,
-                QStringLiteral("Sent translation"), false, timestamp);
+                tr("Sent translation"), false, timestamp);
   ChatHistory::append(session_->peerAddress(), session_->peerName(),
                       QStringLiteral("You"), pendingOriginal_, timestamp);
   pendingOriginal_.clear();
@@ -685,7 +697,7 @@ void ChatTab::incomingTranslationFinished(const QString &translation,
 void ChatTab::sendText(const QString &text) {
   const auto timestamp = QDateTime::currentDateTime();
   session_->sendMessage(text);
-  appendMessage(QStringLiteral("You"), text, {}, QStringLiteral("Original"),
+  appendMessage(QStringLiteral("You"), text, {}, tr("Original"),
                 false, timestamp);
   ChatHistory::append(session_->peerAddress(), session_->peerName(),
                       QStringLiteral("You"), text, timestamp);
@@ -724,20 +736,20 @@ void ChatTab::loadConversationHistory() {
 
   for (const auto &entry : entries) {
     appendMessage(entry.sender, entry.message, {},
-                  QStringLiteral("Original"), true, entry.timestamp);
+                  tr("Original"), true, entry.timestamp);
   }
   appendHistorySeparator();
 }
 
 void ChatTab::appendHistorySeparator() {
-  log_->appendNotice(QStringLiteral("──────── Earlier messages ────────"));
+  log_->appendNotice(tr("──────── Earlier messages ────────"));
 }
 
 void ChatTab::setIncomingMessageText(IncomingMessage &incoming,
                                      const QString &text, bool translated,
                                      bool pending) {
   log_->setMessage(incoming.messageId, text, pending,
-                   translated ? QStringLiteral("Original: %1")
+                   translated ? tr("Original: %1")
                                     .arg(incoming.originalMessage)
                               : QString());
   incoming.translated = translated;
@@ -775,7 +787,7 @@ void ChatTab::clearOutgoingTranslationStatus() {
 void ChatTab::saveAttachmentAs(const QString &path,
                                const QString &suggestedName) {
   const auto destination = QFileDialog::getSaveFileName(
-      this, QStringLiteral("Save as..."),
+      this, tr("Save as..."),
       suggestedName.isEmpty() ? QFileInfo(path).fileName() : suggestedName);
   if (destination.isEmpty() ||
       QFileInfo(destination).absoluteFilePath() ==
@@ -784,8 +796,8 @@ void ChatTab::saveAttachmentAs(const QString &path,
   }
   if (QFileInfo::exists(destination)) {
     const auto answer = QMessageBox::question(
-        this, QStringLiteral("Overwrite file?"),
-        QStringLiteral("The selected file already exists. Overwrite it?"),
+        this, tr("Overwrite file?"),
+        tr("The selected file already exists. Overwrite it?"),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (answer != QMessageBox::Yes) return;
   }
@@ -793,8 +805,8 @@ void ChatTab::saveAttachmentAs(const QString &path,
   QSaveFile target(destination);
   if (!source.open(QIODevice::ReadOnly) || !target.open(QIODevice::WriteOnly)) {
     target.cancelWriting();
-    QMessageBox::warning(this, QStringLiteral("Save failed"),
-                         QStringLiteral("Cannot save the selected file."));
+    QMessageBox::warning(this, tr("Save failed"),
+                         tr("Cannot save the selected file."));
     return;
   }
   while (!source.atEnd()) {
@@ -802,14 +814,14 @@ void ChatTab::saveAttachmentAs(const QString &path,
     if ((bytes.isEmpty() && source.error() != QFileDevice::NoError) ||
         target.write(bytes) != bytes.size()) {
       target.cancelWriting();
-      QMessageBox::warning(this, QStringLiteral("Save failed"),
-                           QStringLiteral("Cannot save the selected file."));
+      QMessageBox::warning(this, tr("Save failed"),
+                           tr("Cannot save the selected file."));
       return;
     }
   }
   if (!target.commit()) {
-    QMessageBox::warning(this, QStringLiteral("Save failed"),
-                         QStringLiteral("Cannot save the selected file."));
+    QMessageBox::warning(this, tr("Save failed"),
+                         tr("Cannot save the selected file."));
   }
 }
 

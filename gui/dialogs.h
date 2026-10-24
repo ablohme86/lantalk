@@ -39,14 +39,16 @@ private:
 class SettingsDialog final : public QDialog {
 public:
   explicit SettingsDialog(QWidget *parent = nullptr);
-  void save() const;
+  void save();
 
 private:
   QLineEdit *nickname_;
+  QComboBox *language_;
   QLineEdit *ollamaUrl_;
   QLineEdit *ollamaModel_;
   QSpinBox *listenPort_;
   QLineEdit *centralHost_;
   QLineEdit *centralPassword_;
   QCheckBox *notifications_;
+  QCheckBox *messageSound_;
 };

@@ -4,6 +4,7 @@
 #include "protocol/centralclient.h"
 
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QHostAddress>
 #include <QMainWindow>
@@ -19,6 +20,7 @@ class QComboBox;
 class ChatSession;
 class ChatTab;
 class QEvent;
+class QSoundEffect;
 class QSystemTrayIcon;
 class QTabWidget;
 class QTcpSocket;
@@ -61,6 +63,7 @@ private:
   void clearUnreadMessages();
   bool inForeground() const;
   void noteIncomingMessage();
+  void playMessageSound(ChatTab *tab);
   void showNotification(ChatTab *tab, const QString &sender,
                         const QString &preview);
   void setTabUnread(ChatTab *tab, bool unread);
@@ -109,4 +112,6 @@ private:
   int unreadMessageCount_ = 0;
   // The conversation the last notification was about; clicking it opens it.
   QPointer<ChatTab> notifiedTab_;
+  QSoundEffect *messageSound_ = nullptr;
+  QElapsedTimer lastMessageSound_;
 };

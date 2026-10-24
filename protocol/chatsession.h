@@ -53,6 +53,7 @@ public:
   bool peerSupportsTyping() const;
   void setTypingTimeouts(int inactivityMs, int refreshMs, int expiryMs);
   QString peerName() const;
+  bool peerIsWebClient() const;
   // The peer nickname from the most recent handshake; unlike peerName(), it
   // survives disconnects and reconnect attempts.
   QString identityName() const;

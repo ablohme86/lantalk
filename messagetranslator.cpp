@@ -27,6 +27,12 @@ struct MessageTranslator::Job {
 
 MessageTranslator::MessageTranslator(QObject *parent) : QObject(parent) {}
 
+void MessageTranslator::setServer(const QString &url, const QString &model)
+{
+    url_ = url;
+    model_ = model;
+}
+
 void MessageTranslator::translate(const QString &message, const QString &sourceLanguage,
                                   const QString &targetLanguage)
 {
@@ -36,6 +42,7 @@ void MessageTranslator::translate(const QString &message, const QString &sourceL
     job->sourceLanguage = sourceLanguage;
     job->targetLanguage = targetLanguage;
     job->client = new OllamaClient(this);
+    if (!url_.isEmpty()) job->client->setServer(url_, model_);
     connect(job->client, &OllamaClient::translated, this, [this, job](const QString &translation, const QString &) {
         job->segments[job->next].text = translation;
         ++job->next;

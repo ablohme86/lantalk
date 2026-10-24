@@ -1,0 +1,12 @@
+{
+  "name": "LANTalk",
+  "short_name": "LANTalk",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#17243d",
+  "theme_color": "#17243d",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

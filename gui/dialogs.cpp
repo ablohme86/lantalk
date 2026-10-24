@@ -1,6 +1,7 @@
 #include "gui/dialogs.h"
 
 #include "appconfig.h"
+#include "gui/uilanguage.h"
 #include "ollamadiscovery.h"
 #include "protocol/centralprotocol.h"
 
@@ -10,6 +11,7 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QLineEdit>
@@ -20,13 +22,13 @@
 TranslationDialog::TranslationDialog(OllamaDiscovery *discovery,
                                      QWidget *parent)
     : QDialog(parent), discovery_(discovery) {
-  setWindowTitle(QStringLiteral("Live Translate"));
+  setWindowTitle(tr("Live Translate"));
   auto *layout = new QFormLayout(this);
   server_ = new QComboBox(this);
   server_->setEditable(true);
   server_->setMinimumContentsLength(28);
   server_->lineEdit()->setPlaceholderText(QStringLiteral("http://host:11434"));
-  auto *rescan = new QPushButton(QStringLiteral("Rescan"), this);
+  auto *rescan = new QPushButton(tr("Rescan"), this);
   auto *serverRow = new QHBoxLayout;
   serverRow->addWidget(server_, 1);
   serverRow->addWidget(rescan);
@@ -40,11 +42,11 @@ TranslationDialog::TranslationDialog(OllamaDiscovery *discovery,
   peerLanguage_->addItems(languages());
   myLanguage_->setCurrentText(QStringLiteral("Norwegian Bokmål"));
   peerLanguage_->setCurrentText(QStringLiteral("English"));
-  layout->addRow(QStringLiteral("Ollama server"), serverRow);
+  layout->addRow(tr("Ollama server"), serverRow);
   layout->addRow(QString(), scanStatus_);
-  layout->addRow(QStringLiteral("Model"), model_);
-  layout->addRow(QStringLiteral("My Language"), myLanguage_);
-  layout->addRow(QStringLiteral("Peer Language"), peerLanguage_);
+  layout->addRow(tr("Model"), model_);
+  layout->addRow(tr("My Language"), myLanguage_);
+  layout->addRow(tr("Peer Language"), peerLanguage_);
   buttons_ = new QDialogButtonBox(
       QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
   connect(buttons_, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -129,14 +131,13 @@ void TranslationDialog::fillModels() {
 
 void TranslationDialog::updateState() {
   if (discovery_ && discovery_->isScanning()) {
-    scanStatus_->setText(QStringLiteral("Scanning the network for Ollama…"));
+    scanStatus_->setText(tr("Scanning the network for Ollama…"));
   } else if (discovery_) {
     const auto count = discovery_->servers().size();
     scanStatus_->setText(
-        count == 0 ? QStringLiteral("No Ollama server found on the network.")
-                   : QStringLiteral("%1 Ollama server%2 found on the network.")
-                         .arg(count)
-                         .arg(count == 1 ? QString() : QStringLiteral("s")));
+        count == 0 ? tr("No Ollama server found on the network.")
+        : count == 1 ? tr("1 Ollama server found on the network.")
+                     : tr("%1 Ollama servers found on the network.").arg(count));
   }
   scanStatus_->setVisible(discovery_ != nullptr);
   buttons_->button(QDialogButtonBox::Ok)
@@ -158,7 +159,7 @@ void TranslationDialog::setLanguages(const QString &myLanguage,
 }
 
 SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
-  setWindowTitle(QStringLiteral("Settings"));
+  setWindowTitle(tr("Settings"));
   auto *layout = new QFormLayout(this);
   nickname_ = new QLineEdit(this);
   ollamaUrl_ = new QLineEdit(this);
@@ -182,11 +183,19 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
   listenPort_->setValue(
       settings.value(QStringLiteral("network/listenPort"), DefaultPort)
           .toUInt());
-  layout->addRow(QStringLiteral("Nickname"), nickname_);
-  layout->addRow(QStringLiteral("Listen port"), listenPort_);
+  layout->addRow(tr("Nickname"), nickname_);
+  language_ = new QComboBox(this);
+  language_->setIconSize(QSize(24, 16));
+  for (const auto &language : uiLanguages()) {
+    language_->addItem(uiLanguageFlag(language.code), language.nativeName,
+                       language.code);
+  }
+  language_->setCurrentIndex(language_->findData(configuredUiLanguage()));
+  layout->addRow(tr("Language"), language_);
+  layout->addRow(tr("Listen port"), listenPort_);
   centralHost_ = new QLineEdit(this);
   centralHost_->setPlaceholderText(
-      QStringLiteral("None (chat directly on the LAN)"));
+      tr("None (chat directly on the LAN)"));
   centralHost_->setToolTip(QStringLiteral(
       "IP address or DNS name of a server running lantalkd, optionally "
       "with :port (default %1). With a central host, LANTalk stops listening "
@@ -194,12 +203,12 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
                                .arg(CentralProtocol::DefaultCentralPort));
   centralHost_->setText(
       settings.value(QStringLiteral("network/centralHost")).toString());
-  layout->addRow(QStringLiteral("Central host"), centralHost_);
+  layout->addRow(tr("Central host"), centralHost_);
   centralPassword_ = new QLineEdit(this);
   centralPassword_->setEchoMode(QLineEdit::Password);
-  centralPassword_->setPlaceholderText(QStringLiteral("None"));
+  centralPassword_->setPlaceholderText(tr("None"));
   centralPassword_->setToolTip(
-      QStringLiteral("The password the central host was started with, if any."));
+      tr("The password the central host was started with, if any."));
   centralPassword_->setText(
       settings.value(QStringLiteral("network/centralPassword")).toString());
   centralPassword_->setEnabled(!centralHost_->text().trimmed().isEmpty());
@@ -207,14 +216,19 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
           [this](const QString &host) {
             centralPassword_->setEnabled(!host.trimmed().isEmpty());
           });
-  layout->addRow(QStringLiteral("Central host password"), centralPassword_);
+  layout->addRow(tr("Central host password"), centralPassword_);
   notifications_ = new QCheckBox(
-      QStringLiteral("Notify me about new messages"), this);
+      tr("Notify me about new messages"), this);
   notifications_->setChecked(
       settings.value(QStringLiteral("notifications/enabled"), true).toBool());
-  layout->addRow(QStringLiteral("Notifications"), notifications_);
-  layout->addRow(QStringLiteral("Ollama URL"), ollamaUrl_);
-  layout->addRow(QStringLiteral("Ollama model"), ollamaModel_);
+  layout->addRow(tr("Notifications"), notifications_);
+  messageSound_ = new QCheckBox(
+      tr("Play a sound for new messages"), this);
+  messageSound_->setChecked(
+      settings.value(QStringLiteral("notifications/sound"), true).toBool());
+  layout->addRow(QString(), messageSound_);
+  layout->addRow(tr("Ollama URL"), ollamaUrl_);
+  layout->addRow(tr("Ollama model"), ollamaModel_);
   auto *buttons = new QDialogButtonBox(
       QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
   connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -222,7 +236,16 @@ SettingsDialog::SettingsDialog(QWidget *parent) : QDialog(parent) {
   layout->addWidget(buttons);
 }
 
-void SettingsDialog::save() const {
+void SettingsDialog::save() {
+  const auto language = language_->currentData().toString();
+  if (language != configuredUiLanguage()) {
+    setConfiguredUiLanguage(language);
+    // Shown in the chosen language, since that is the one the user reads.
+    QMessageBox::information(
+        this, QStringLiteral("LANTalk"),
+        uiText(language,
+               "LANTalk will use the new language the next time it starts."));
+  }
   QSettings settings;
   const auto nickname = escapeProtocolField(nickname_->text());
   settings.setValue(QStringLiteral("profile/nickname"),
@@ -234,6 +257,8 @@ void SettingsDialog::save() const {
                     centralPassword_->text());
   settings.setValue(QStringLiteral("notifications/enabled"),
                     notifications_->isChecked());
+  settings.setValue(QStringLiteral("notifications/sound"),
+                    messageSound_->isChecked());
   settings.setValue(QStringLiteral("ollama/url"),
                     ollamaUrl_->text().trimmed().remove(
                         QRegularExpression(QStringLiteral("/+$"))));

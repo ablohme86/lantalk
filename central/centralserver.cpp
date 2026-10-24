@@ -1,10 +1,12 @@
 #include "central/centralserver.h"
 
+#include "central/centrallink.h"
+#include "central/translationservice.h"
+
 #include "protocol/centralprotocol.h"
 #include "protocol/conversationidentity.h"
 
 #include <QRandomGenerator>
-#include <QTcpSocket>
 #include <QUuid>
 
 namespace {
@@ -38,7 +40,7 @@ CentralServer::CentralServer(QObject *parent)
 }
 
 CentralServer::~CentralServer() {
-  // Sockets are children of server_; keep their final signals away from a
+  // Links are children of this server; keep their final signals away from a
   // half-destroyed server.
   for (auto *socket : clients_.keys()) {
     disconnect(socket, nullptr, this, nullptr);
@@ -75,23 +77,37 @@ void CentralServer::setIdleTimeout(int milliseconds) {
   sweepTimer_.setInterval(qMax(50, milliseconds / 4));
 }
 
+void CentralServer::setTranslationService(TranslationService *service) {
+  translation_ = service;
+  connect(service, &TranslationService::infoChanged, this,
+          [this] { broadcast(translation_->infoLine(), nullptr); });
+}
+
 void CentralServer::acceptClients() {
   while (auto *socket = server_.nextPendingConnection()) {
-    socket->setSocketOption(QAbstractSocket::KeepAliveOption, 1);
-    Client client;
-    client.address = CentralProtocol::formatAddress(socket->peerAddress());
-    client.lastActivity.start();
-    client.nonce = createNonce();
-    clients_.insert(socket, client);
-    connect(socket, &QTcpSocket::readyRead, this,
-            [this, socket] { readClient(socket); });
-    connect(socket, &QTcpSocket::disconnected, this,
-            [this, socket] { dropClient(socket, QStringLiteral("disconnected")); });
-    send(socket, "CENTRAL_CHALLENGE " + client.nonce);
+    addLink(new TcpLink(socket));
   }
 }
 
-void CentralServer::readClient(QTcpSocket *socket) {
+void CentralServer::addLink(CentralLink *link) {
+  link->setParent(this);
+  Client client;
+  client.address = link->peerAddress();
+  client.web = link->isWeb();
+  client.lastActivity.start();
+  client.nonce = createNonce();
+  clients_.insert(link, client);
+  connect(link, &CentralLink::readyRead, this,
+          [this, link] { readClient(link); });
+  connect(link, &CentralLink::disconnected, this,
+          [this, link] { dropClient(link, QStringLiteral("disconnected")); });
+  send(link, "CENTRAL_CHALLENGE " + client.nonce);
+  // Lines may have arrived with the connection, e.g. in a WebSocket's
+  // first frames.
+  readClient(link);
+}
+
+void CentralServer::readClient(CentralLink *socket) {
   auto client = clients_.find(socket);
   if (client == clients_.end()) return;
   client->buffer.append(socket->readAll());
@@ -112,7 +128,7 @@ void CentralServer::readClient(QTcpSocket *socket) {
   }
 }
 
-void CentralServer::processLine(QTcpSocket *socket, const QString &line) {
+void CentralServer::processLine(CentralLink *socket, const QString &line) {
   const auto command = line.section(u' ', 0, 0);
   auto &client = clients_[socket];
   if (client.rejected) return;
@@ -142,11 +158,19 @@ void CentralServer::processLine(QTcpSocket *socket, const QString &line) {
     }
   } else if (command == QStringLiteral("CENTRAL_PING")) {
     send(socket, "CENTRAL_PONG");
+  } else if (command == QStringLiteral("CENTRAL_TRANSLATE") &&
+             parts.size() == 3 && translation_) {
+    translation_->translate(socket, parts.at(1), parts.at(2),
+                            [this, socket](const QByteArray &reply) {
+                              send(socket, reply);
+                            });
+  } else if (command == QStringLiteral("CENTRAL_OLLAMA_SCAN") && translation_) {
+    translation_->scan();
   }
   // Anything else is ignored, so newer clients can add commands.
 }
 
-void CentralServer::registerClient(QTcpSocket *socket,
+void CentralServer::registerClient(CentralLink *socket,
                                    const QStringList &parts) {
   bool versionIsValid = false;
   bool portIsValid = false;
@@ -159,7 +183,7 @@ void CentralServer::registerClient(QTcpSocket *socket,
     send(socket, "CENTRAL_REJECT " +
                      CentralProtocol::encodeField(QStringLiteral(
                          "The central host could not read the sign-in.")));
-    socket->disconnectFromHost();
+    socket->close();
     return;
   }
 
@@ -206,18 +230,22 @@ void CentralServer::registerClient(QTcpSocket *socket,
   for (auto other = clients_.cbegin(); other != clients_.cend(); ++other) {
     if (other.key() != socket && other->registered) {
       send(socket, peerLine(*other));
+      if (other->web) send(socket, kindLine(*other));
     }
   }
   send(socket, QStringLiteral("CENTRAL_WELCOME %1 %2")
                    .arg(registered.id, registered.address)
                    .toUtf8());
   broadcast(peerLine(registered), socket);
+  // Older clients ignore the unknown line and list web users as usual.
+  if (registered.web) broadcast(kindLine(registered), socket);
+  if (translation_) send(socket, translation_->infoLine());
   log(QStringLiteral("%1 connected (%2 online)")
           .arg(describe(registered))
           .arg(clientCount()));
 }
 
-void CentralServer::openChannel(QTcpSocket *socket, const QString &channelId,
+void CentralServer::openChannel(CentralLink *socket, const QString &channelId,
                                 const QString &targetId) {
   if (!CentralProtocol::isValidChannelId(channelId) ||
       channels_.contains(channelId)) {
@@ -238,11 +266,11 @@ void CentralServer::openChannel(QTcpSocket *socket, const QString &channelId,
   send(socket, "CENTRAL_OPENED " + channelId.toUtf8());
 }
 
-void CentralServer::relay(QTcpSocket *socket, const QString &channelId,
+void CentralServer::relay(CentralLink *socket, const QString &channelId,
                           const QByteArray &line) {
   const auto channel = channels_.constFind(channelId);
   if (channel == channels_.cend()) return;
-  QTcpSocket *destination = nullptr;
+  CentralLink *destination = nullptr;
   if (channel->opener == socket) destination = channel->target;
   else if (channel->target == socket) destination = channel->opener;
   if (!destination) return;
@@ -254,7 +282,7 @@ void CentralServer::relay(QTcpSocket *socket, const QString &channelId,
 }
 
 void CentralServer::closeChannel(const QString &channelId,
-                                 QTcpSocket *closedBy, const QString &reason) {
+                                 CentralLink *closedBy, const QString &reason) {
   const auto channel = channels_.take(channelId);
   for (auto *end : {channel.opener, channel.target}) {
     if (!end || !clients_.contains(end)) continue;
@@ -265,7 +293,7 @@ void CentralServer::closeChannel(const QString &channelId,
   }
 }
 
-void CentralServer::dropClient(QTcpSocket *socket, const QString &why) {
+void CentralServer::dropClient(CentralLink *socket, const QString &why) {
   const auto found = clients_.find(socket);
   if (found == clients_.end()) return;
   const auto client = *found;
@@ -276,14 +304,10 @@ void CentralServer::dropClient(QTcpSocket *socket, const QString &why) {
   disconnect(socket, nullptr, this, nullptr);
   // Let queued lines (e.g. CENTRAL_REPLACED) reach the client before the
   // socket goes away, but never wait for a stuck one for long.
-  connect(socket, &QTcpSocket::disconnected, socket, &QObject::deleteLater);
+  connect(socket, &CentralLink::disconnected, socket, &QObject::deleteLater);
   QTimer::singleShot(5000, socket, &QObject::deleteLater);
-  if (socket->state() == QAbstractSocket::ConnectedState) {
-    socket->disconnectFromHost();
-  }
-  if (socket->state() == QAbstractSocket::UnconnectedState) {
-    socket->deleteLater();
-  }
+  socket->close();
+  if (socket->isUnconnected()) socket->deleteLater();
   if (!client.registered) return;
   broadcast("CENTRAL_PEER_GONE " + client.id.toUtf8(), nullptr);
   log(QStringLiteral("%1 %2 (%3 online)")
@@ -292,7 +316,7 @@ void CentralServer::dropClient(QTcpSocket *socket, const QString &why) {
 }
 
 void CentralServer::sweepIdleClients() {
-  QList<QTcpSocket *> idle;
+  QList<CentralLink *> idle;
   for (auto client = clients_.cbegin(); client != clients_.cend(); ++client) {
     const auto limit = client->registered
                            ? qint64(idleTimeoutMs_)
@@ -304,17 +328,20 @@ void CentralServer::sweepIdleClients() {
   }
 }
 
-void CentralServer::send(QTcpSocket *socket, const QByteArray &line) {
-  if (socket->state() != QAbstractSocket::ConnectedState) return;
-  socket->write(line + '\n');
+void CentralServer::send(CentralLink *socket, const QByteArray &line) {
+  socket->writeLine(line);
 }
 
-void CentralServer::broadcast(const QByteArray &line, QTcpSocket *except) {
+void CentralServer::broadcast(const QByteArray &line, CentralLink *except) {
   for (auto client = clients_.cbegin(); client != clients_.cend(); ++client) {
     if (client.key() != except && client->registered) {
       send(client.key(), line);
     }
   }
+}
+
+QByteArray CentralServer::kindLine(const Client &client) const {
+  return "CENTRAL_PEER_KIND " + client.id.toUtf8() + " web";
 }
 
 QByteArray CentralServer::peerLine(const Client &client) const {
@@ -326,7 +353,7 @@ QByteArray CentralServer::peerLine(const Client &client) const {
       .toUtf8();
 }
 
-QTcpSocket *CentralServer::findClient(const QString &id) const {
+CentralLink *CentralServer::findClient(const QString &id) const {
   for (auto client = clients_.cbegin(); client != clients_.cend(); ++client) {
     if (client->registered && client->id == id) return client.key();
   }

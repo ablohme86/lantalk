@@ -37,6 +37,8 @@ public:
   // Identical at both ends of one connection and different for every other
   // connection; used to resolve simultaneous connects deterministically.
   virtual QString connectionKey(bool outgoing) const = 0;
+  // The peer uses lantalkd's web client rather than LANTalk.
+  virtual bool peerIsWebClient() const { return false; }
 
   // A new, unconnected transport for outgoing connections in the current
   // network mode (direct TCP unless a central host is configured).

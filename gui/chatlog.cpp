@@ -99,7 +99,7 @@ void ChatLog::appendFile(bool outgoing, const QString &name,
                                                      Qt::SmoothTransformation)
                                : image);
       thumbnail->setCursor(Qt::PointingHandCursor);
-      thumbnail->setToolTip(QStringLiteral("Click to view the image"));
+      thumbnail->setToolTip(tr("Click to view the image"));
       thumbnail->setProperty("imagePath", path);
       thumbnail->installEventFilter(this);
     }
@@ -108,7 +108,7 @@ void ChatLog::appendFile(bool outgoing, const QString &name,
   auto *bubble = addBubble(outgoing, timestamp, false, thumbnail);
   auto html = QStringLiteral("📎 <i>%1</i>").arg(name.toHtmlEscaped());
   if (!outgoing) {
-    html += QStringLiteral(" &nbsp;<a href=\"save\">Save as...</a>");
+    html += QStringLiteral(" &nbsp;<a href=\"save\">%1</a>").arg(tr("Save as..."));
     connect(bubble, &QLabel::linkActivated, this, [this, path, name] {
       emit saveAttachmentRequested(path, name);
     });

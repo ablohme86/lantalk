@@ -450,6 +450,9 @@ void ChatSession::resetTypingState() {
 }
 
 QString ChatSession::peerName() const { return peerName_; }
+bool ChatSession::peerIsWebClient() const {
+  return transport_->peerIsWebClient();
+}
 QString ChatSession::identityName() const { return identityName_; }
 QString ChatSession::peerAddress() const {
   const auto currentAddress = transport_->peerAddress();

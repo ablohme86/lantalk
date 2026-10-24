@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#17243d">
+  <meta name="color-scheme" content="light dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="LANTalk">
+  <title>LANTalk</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <!-- Sign-in -->
+  <main id="login" class="screen login" hidden>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <img src="icon.svg" alt="" class="login-logo" width="72" height="72">
+      <h1>LANTalk</h1>
+      <label class="field">
+        <span data-t="nickname">Nickname</span>
+        <input id="login-nickname" name="username" autocomplete="username"
+               autocapitalize="off" autocorrect="off" spellcheck="false"
+               maxlength="64" required enterkeyhint="next">
+      </label>
+      <label class="field">
+        <span data-t="password">Password</span>
+        <input id="login-password" name="password" type="password"
+               autocomplete="current-password" enterkeyhint="go">
+        <small data-t="passwordHint">Leave empty if the server has no password.</small>
+      </label>
+      <label class="check">
+        <input id="login-remember" type="checkbox" checked>
+        <span data-t="remember">Remember me on this device</span>
+      </label>
+      <p id="login-error" class="error" role="alert" hidden></p>
+      <button id="login-submit" class="primary" type="submit" data-t="signIn">Sign in</button>
+      <label class="language">
+        <select id="language" aria-label="Language"></select>
+      </label>
+    </form>
+  </main>
+
+  <!-- Signed in: people list and conversation -->
+  <div id="app" class="app" hidden>
+    <section id="people" class="pane people" aria-labelledby="people-title">
+      <header class="bar">
+        <div class="bar-title">
+          <h1 id="people-title">LANTalk</h1>
+          <span id="me" class="subtle"></span>
+        </div>
+        <button id="sign-out" class="icon-button" type="button" data-t-title="signOut" title="Sign out">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h5M15 16l4-4-4-4M19 12H9"/></svg>
+        </button>
+      </header>
+      <div id="connection" class="banner" role="status" hidden></div>
+      <div class="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+        <input id="search" type="search" data-t-placeholder="search" placeholder="Search people"
+               autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+      </div>
+      <ul id="people-list" class="people-list"></ul>
+      <p id="people-empty" class="empty" hidden></p>
+    </section>
+
+    <section id="chat" class="pane chat" aria-live="polite">
+      <header class="bar">
+        <button id="back" class="icon-button back" type="button" data-t-title="back" title="Back">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+        </button>
+        <div class="avatar" id="chat-avatar" aria-hidden="true"></div>
+        <div class="bar-title">
+          <h2 id="chat-name"></h2>
+          <span id="chat-status" class="subtle"></span>
+        </div>
+        <button id="translate" class="icon-button translate" type="button" aria-pressed="false" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h10M8 3v2M11 5c-.8 4-3.4 7.2-7 9M5.5 9c1.3 2.2 3.3 3.8 5.5 4.8M12.5 21l4.25-9.5L21 21M14 17.5h5.5"/></svg>
+        </button>
+      </header>
+      <div id="chat-placeholder" class="empty chat-placeholder" data-t="pickSomeone">Pick someone to chat with.</div>
+      <div id="messages" class="messages"></div>
+      <div id="typing" class="typing" hidden></div>
+      <form id="composer" class="composer" hidden>
+        <label class="icon-button attach" data-t-title="attach" title="Attach file">
+          <input id="file" type="file" multiple hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5 12.4 19a5 5 0 0 1-7.1-7.1l8-8a3.4 3.4 0 0 1 4.8 4.8l-8 8a1.7 1.7 0 0 1-2.4-2.4l7.3-7.3"/></svg>
+        </label>
+        <textarea id="input" rows="1" data-t-placeholder="message" placeholder="Message"
+                  autocomplete="off"></textarea>
+        <button id="send" class="send" type="submit" data-t-title="send" title="Send" disabled>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 20 4l-4 16-4-7z"/></svg>
+        </button>
+      </form>
+    </section>
+  </div>
+
+  <div id="translate-sheet" class="sheet" hidden>
+    <form id="translate-form" class="sheet-card" novalidate>
+      <h2 data-t="liveTranslate">Live Translate</h2>
+      <p id="translate-by-server" class="subtle" data-t="serverTranslates" hidden>The server translates for you.</p>
+      <fieldset id="translate-source" class="choices">
+        <label class="choice">
+          <input type="radio" name="source" value="server">
+          <span data-t="sourceServer">Ollama found by the server</span>
+        </label>
+        <div class="choice-body" data-for="server">
+          <div class="row">
+            <select id="translate-server" aria-label="Ollama"></select>
+            <button id="translate-rescan" class="secondary" type="button" data-t="rescan">Rescan</button>
+          </div>
+          <small id="translate-server-status" class="subtle"></small>
+        </div>
+        <label class="choice">
+          <input type="radio" name="source" value="direct">
+          <span data-t="sourceDirect">My own Ollama address</span>
+        </label>
+        <div class="choice-body" data-for="direct">
+          <input id="translate-url" type="url" inputmode="url" placeholder="http://192.168.1.20:11434"
+                 autocomplete="off" autocapitalize="off" spellcheck="false">
+          <select id="translate-model" data-t-title="model" title="Model"></select>
+          <small id="translate-direct-status" class="subtle"></small>
+        </div>
+      </fieldset>
+      <div class="row languages">
+        <label class="field">
+          <span data-t="myLanguage">My language</span>
+          <select id="translate-mine"></select>
+        </label>
+        <label class="field">
+          <span data-t="peerLanguage">Their language</span>
+          <select id="translate-peer"></select>
+        </label>
+      </div>
+      <div class="row actions">
+        <button id="translate-cancel" class="secondary" type="button" data-t="cancel">Cancel</button>
+        <button id="translate-start" class="primary" type="submit" data-t="start">Start</button>
+      </div>
+    </form>
+  </div>
+
+  <div id="viewer" class="viewer" hidden>
+    <img id="viewer-image" alt="">
+  </div>
+</body>
+</html>

@@ -1,4 +1,6 @@
 #include "central/centralserver.h"
+#include "central/translationservice.h"
+#include "central/webserver.h"
 #include "protocol/centralprotocol.h"
 
 #include <QCommandLineParser>
@@ -36,9 +38,44 @@ int main(int argc, char *argv[]) {
                      "in. The LANTALK_CENTRAL_PASSWORD environment variable "
                      "works too."),
       QStringLiteral("file"));
+  const QCommandLineOption webPortOption(
+      QStringLiteral("web-port"),
+      QStringLiteral("TCP port for the web client that phones and browsers "
+                     "open (default %1; 0 turns it off).")
+          .arg(CentralProtocol::DefaultWebPort),
+      QStringLiteral("port"), QString::number(CentralProtocol::DefaultWebPort));
+  const QCommandLineOption webCertificateOption(
+      QStringLiteral("web-cert"),
+      QStringLiteral("Serve the web client over HTTPS with the PEM certificate "
+                     "(chain) in <file>; needs --web-key."),
+      QStringLiteral("file"));
+  const QCommandLineOption webKeyOption(
+      QStringLiteral("web-key"),
+      QStringLiteral("The unencrypted PEM private key for --web-cert."),
+      QStringLiteral("file"));
+  const QCommandLineOption ollamaUrlOption(
+      QStringLiteral("ollama-url"),
+      QStringLiteral("Translate for web clients with the Ollama server at "
+                     "<url>, e.g. http://10.0.0.7:11434; needs --ollama-model. "
+                     "Without it, lantalkd looks for Ollama on its network "
+                     "when a web client asks."),
+      QStringLiteral("url"));
+  const QCommandLineOption ollamaModelOption(
+      QStringLiteral("ollama-model"),
+      QStringLiteral("The Ollama model for --ollama-url."),
+      QStringLiteral("model"));
+  const QCommandLineOption noOllamaDiscoveryOption(
+      QStringLiteral("no-ollama-discovery"),
+      QStringLiteral("Never look for Ollama servers on the network."));
   parser.addOption(portOption);
   parser.addOption(listenOption);
   parser.addOption(passwordFileOption);
+  parser.addOption(webPortOption);
+  parser.addOption(webCertificateOption);
+  parser.addOption(webKeyOption);
+  parser.addOption(ollamaUrlOption);
+  parser.addOption(ollamaModelOption);
+  parser.addOption(noOllamaDiscoveryOption);
   parser.process(application);
 
   // Not a plain --password option: command lines are visible to every user.
@@ -65,6 +102,21 @@ int main(int argc, char *argv[]) {
                  qPrintable(parser.value(portOption)));
     return 2;
   }
+  bool webPortIsValid = false;
+  const auto webPort = parser.value(webPortOption).toUShort(&webPortIsValid);
+  if (!webPortIsValid) {
+    std::fprintf(stderr, "Invalid web port: %s\n",
+                 qPrintable(parser.value(webPortOption)));
+    return 2;
+  }
+  if (parser.isSet(webCertificateOption) != parser.isSet(webKeyOption)) {
+    std::fprintf(stderr, "--web-cert and --web-key go together.\n");
+    return 2;
+  }
+  if (parser.isSet(ollamaUrlOption) != parser.isSet(ollamaModelOption)) {
+    std::fprintf(stderr, "--ollama-url and --ollama-model go together.\n");
+    return 2;
+  }
   QHostAddress address(QHostAddress::Any);
   if (parser.isSet(listenOption) &&
       !address.setAddress(parser.value(listenOption))) {
@@ -75,6 +127,11 @@ int main(int argc, char *argv[]) {
 
   CentralServer server;
   server.setPassword(password);
+  TranslationService translation;
+  translation.setServer(parser.value(ollamaUrlOption),
+                        parser.value(ollamaModelOption));
+  translation.setDiscoveryEnabled(!parser.isSet(noOllamaDiscoveryOption));
+  server.setTranslationService(&translation);
   server.setLogger([](const QString &message) {
     std::fprintf(stdout, "%s %s\n",
                  qPrintable(QDateTime::currentDateTime().toString(
@@ -93,6 +150,28 @@ int main(int argc, char *argv[]) {
                LANTALK_VERSION, qPrintable(address.toString()),
                unsigned(server.serverPort()),
                password.isEmpty() ? "no password" : "password required");
+  if (translation.isConfigured()) {
+    std::fprintf(stdout, "Live Translate for web clients with %s at %s\n",
+                 qPrintable(parser.value(ollamaModelOption)),
+                 qPrintable(parser.value(ollamaUrlOption)));
+  }
+  WebServer web(&server);
+  if (webPort != 0) {
+    if (parser.isSet(webCertificateOption) &&
+        !web.setCertificate(parser.value(webCertificateOption),
+                            parser.value(webKeyOption))) {
+      std::fprintf(stderr, "%s\n", qPrintable(web.errorString()));
+      return 2;
+    }
+    if (!web.listen(address, webPort)) {
+      std::fprintf(stderr, "Cannot serve the web client on %s:%u: %s\n",
+                   qPrintable(address.toString()), unsigned(webPort),
+                   qPrintable(web.errorString()));
+      return 1;
+    }
+    std::fprintf(stdout, "Web client at %s://<this host>:%u/\n",
+                 web.isSecure() ? "https" : "http", unsigned(web.serverPort()));
+  }
   std::fflush(stdout);
   return application.exec();
 }

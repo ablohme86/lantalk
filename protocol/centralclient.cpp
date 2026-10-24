@@ -265,6 +265,16 @@ void CentralClient::processLine(const QString &line) {
     if (ready_) emit peersChanged();
     return;
   }
+  if (command == QStringLiteral("CENTRAL_PEER_KIND") && parts.size() == 3) {
+    for (auto &peer : peers_) {
+      if (peer.id == parts.at(1)) {
+        peer.web = parts.at(2) == QStringLiteral("web");
+        if (ready_) emit peersChanged();
+        break;
+      }
+    }
+    return;
+  }
   if (command == QStringLiteral("CENTRAL_PEER_GONE") && parts.size() == 2) {
     for (int index = 0; index < peers_.size(); ++index) {
       if (peers_.at(index).id == parts.at(1)) {
@@ -531,3 +541,5 @@ QString RelayTransport::errorString() const { return error_; }
 QString RelayTransport::connectionKey(bool) const { return channelId_; }
 
 QString RelayTransport::peerNickname() const { return peer_.nickname; }
+
+bool RelayTransport::peerIsWebClient() const { return peer_.web; }

@@ -1421,7 +1421,8 @@ QList<TerminalUi::DiscoveredHost> TerminalUi::sortedHosts() const
         // The central host lists the clients connected to it instead.
         hosts.clear();
         for (const auto &peer : central_.peers()) {
-            hosts.append({peer.nickname, QHostAddress(peer.address), peer.port, QDateTime::currentDateTimeUtc()});
+            hosts.append({peer.nickname, QHostAddress(peer.address), peer.port, QDateTime::currentDateTimeUtc(),
+                          peer.web});
         }
     }
     std::sort(hosts.begin(), hosts.end(), [](const DiscoveredHost &a, const DiscoveredHost &b) {
@@ -1612,7 +1613,8 @@ void TerminalUi::redraw()
             QString(std::max(0, sidebar - displayWidth(QStringLiteral("├── HOSTS ON NETWORK "))), u'─'));
         else if (row - 1 < hosts.size()) {
             const auto &host = hosts.at(row - 1);
-            left = QStringLiteral("│%1 %2").arg(row - 1 == selectedHost_ ? u'>' : u' ').arg(host.nickname);
+            left = QStringLiteral("│%1 %2").arg(row - 1 == selectedHost_ ? u'>' : u' ')
+                       .arg(host.web ? QStringLiteral("%1 (Web)").arg(host.nickname) : host.nickname);
         } else if (row == hosts.size() + 1 && hosts.isEmpty()) {
             left = central_.isActive() && !central_.isReady() ? QStringLiteral("│ (connecting...)")
                                                               : QStringLiteral("│ (discovering...)");
@@ -1797,7 +1799,11 @@ void TerminalUi::printHosts() const
         return;
     }
     QStringList lines{QStringLiteral("Discovered hosts:")};
-    for (int i = 0; i < hosts.size(); ++i) lines << QStringLiteral("  %1. %2 (%3:%4)").arg(i + 1).arg(hosts[i].nickname, hosts[i].address.toString()).arg(hosts[i].port);
+    for (int i = 0; i < hosts.size(); ++i) {
+        lines << (hosts[i].web
+                      ? QStringLiteral("  %1. %2 (Web)").arg(i + 1).arg(hosts[i].nickname)
+                      : QStringLiteral("  %1. %2 (%3:%4)").arg(i + 1).arg(hosts[i].nickname, hosts[i].address.toString()).arg(hosts[i].port));
+    }
     print(hosts.isEmpty() ? QStringLiteral("No LANTalk hosts found.") : lines.join(u'\n'));
 }
 
@@ -1817,11 +1823,14 @@ QString TerminalUi::conversationTitle(const Conversation &conversation) const
 {
     const QString peer = conversation.session->peerName();
     const QString address = conversation.session->peerAddress();
+    // A phone's address says little; that it is the web client says more.
     const QString title = peer.isEmpty()
                               ? (address.isEmpty() ? conversation.title : address)
-                              : (address.isEmpty()
-                                     ? peer
-                                     : QStringLiteral("%1 (%2)").arg(peer, address));
+                              : conversation.session->peerIsWebClient()
+                                  ? QStringLiteral("%1 (Web)").arg(peer)
+                                  : (address.isEmpty()
+                                         ? peer
+                                         : QStringLiteral("%1 (%2)").arg(peer, address));
     return conversation.disconnected && !peer.isEmpty()
                ? QStringLiteral("%1 (Disconnected)").arg(peer)
                : title;

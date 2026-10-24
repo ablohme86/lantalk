@@ -16,6 +16,8 @@ class MessageTranslator final : public QObject {
 
 public:
     explicit MessageTranslator(QObject *parent = nullptr);
+    // Uses this server and model instead of the ones in the settings.
+    void setServer(const QString &url, const QString &model);
     void translate(const QString &message, const QString &sourceLanguage, const QString &targetLanguage);
 
 signals:
@@ -25,4 +27,7 @@ signals:
 private:
     struct Job;
     void step(const std::shared_ptr<Job> &job);
+
+    QString url_;
+    QString model_;
 };

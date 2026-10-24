@@ -33,6 +33,8 @@ public:
   quint16 reconnectPort() const;
   void setReconnectEndpoint(const QString &address, quint16 port);
   void refreshTranslationAvailability();
+  // Only one side translates at a time; the other side's button waits.
+  void setPeerTranslating(bool active);
   // Ollama servers found on the network also make Live Translate available
   // and can be picked in its dialog.
   void setOllamaDiscovery(OllamaDiscovery *discovery);

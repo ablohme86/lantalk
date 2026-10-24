@@ -12,7 +12,8 @@
 
 #include <functional>
 
-class QTcpSocket;
+class CentralLink;
+class TranslationService;
 
 // lantalkd: keeps the list of connected LANTalk clients
 // and relays each conversation between two of them, line by line, without
@@ -34,6 +35,12 @@ public:
   void setPassword(const QString &password);
   void setLogger(std::function<void(const QString &)> logger);
   void setIdleTimeout(int milliseconds);
+  // Serves a client that connected some other way, e.g. the web client's
+  // WebSocket; the server takes ownership.
+  void addLink(CentralLink *link);
+  // Offers Live Translate through lantalkd to clients (see
+  // central/translationservice.h).
+  void setTranslationService(TranslationService *service);
 
 private:
   struct Client {
@@ -47,37 +54,40 @@ private:
     bool rejected = false;
     QByteArray nonce;
     QSet<QString> channels;
+    bool web = false;
     QElapsedTimer lastActivity;
   };
   struct Channel {
-    QTcpSocket *opener;
-    QTcpSocket *target;
+    CentralLink *opener;
+    CentralLink *target;
   };
 
   void acceptClients();
-  void readClient(QTcpSocket *socket);
-  void processLine(QTcpSocket *socket, const QString &line);
-  void registerClient(QTcpSocket *socket, const QStringList &parts);
-  void openChannel(QTcpSocket *socket, const QString &channelId,
+  void readClient(CentralLink *socket);
+  void processLine(CentralLink *socket, const QString &line);
+  void registerClient(CentralLink *socket, const QStringList &parts);
+  void openChannel(CentralLink *socket, const QString &channelId,
                    const QString &targetId);
-  void relay(QTcpSocket *socket, const QString &channelId,
+  void relay(CentralLink *socket, const QString &channelId,
              const QByteArray &line);
-  void closeChannel(const QString &channelId, QTcpSocket *closedBy,
+  void closeChannel(const QString &channelId, CentralLink *closedBy,
                     const QString &reason);
-  void dropClient(QTcpSocket *socket, const QString &why);
+  void dropClient(CentralLink *socket, const QString &why);
   void sweepIdleClients();
-  void send(QTcpSocket *socket, const QByteArray &line);
-  void broadcast(const QByteArray &line, QTcpSocket *except);
+  void send(CentralLink *socket, const QByteArray &line);
+  void broadcast(const QByteArray &line, CentralLink *except);
   QByteArray peerLine(const Client &client) const;
-  QTcpSocket *findClient(const QString &id) const;
+  QByteArray kindLine(const Client &client) const;
+  CentralLink *findClient(const QString &id) const;
   QString describe(const Client &client) const;
   void log(const QString &message) const;
 
   QTcpServer server_;
-  QHash<QTcpSocket *, Client> clients_;
+  QHash<CentralLink *, Client> clients_;
   QHash<QString, Channel> channels_;
   QTimer sweepTimer_;
   int idleTimeoutMs_;
   QString password_;
   std::function<void(const QString &)> logger_;
+  TranslationService *translation_ = nullptr;
 };

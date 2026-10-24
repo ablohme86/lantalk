@@ -20,6 +20,12 @@ QString withoutLatestTag(const QString &model)
 
 OllamaClient::OllamaClient(QObject *parent) : QObject(parent) {}
 
+void OllamaClient::setServer(const QString &url, const QString &model)
+{
+    url_ = url;
+    model_ = model;
+}
+
 void OllamaClient::checkAvailability()
 {
     QSettings settings;
@@ -59,8 +65,10 @@ void OllamaClient::checkAvailability()
 void OllamaClient::translate(const QString &text, const QString &sourceLanguage, const QString &targetLanguage)
 {
     QSettings settings;
-    const auto endpoint = settings.value(QStringLiteral("ollama/url"), DefaultOllamaUrl).toString();
-    auto model = settings.value(QStringLiteral("ollama/model"), DefaultOllamaModel).toString();
+    const auto endpoint = url_.isEmpty()
+        ? settings.value(QStringLiteral("ollama/url"), DefaultOllamaUrl).toString() : url_;
+    auto model = url_.isEmpty()
+        ? settings.value(QStringLiteral("ollama/model"), DefaultOllamaModel).toString() : model_;
     if (model == QStringLiteral("translategemma")) {
         model = QString::fromLatin1(DefaultOllamaModel);
     }

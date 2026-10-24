@@ -291,6 +291,17 @@ private slots:
       });
     };
     QTRY_VERIFY(showsStatus());
+
+    // Bob cannot translate as well while Alice does, until she stops.
+    QPushButton *bobButton = nullptr;
+    for (auto *candidate : bobTab.findChildren<QPushButton *>()) {
+      if (candidate->text() == QStringLiteral("Live Translate")) bobButton = candidate;
+    }
+    QVERIFY(bobButton);
+    QTRY_VERIFY(!bobButton->isEnabled());
+    QVERIFY(bobButton->toolTip().contains(QStringLiteral("alice")));
+    aliceSession->stopLiveTranslation();
+    QTRY_VERIFY(bobButton->isEnabled());
   }
 
   void bubblesSitOnTheirSides() {

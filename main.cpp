@@ -12,6 +12,7 @@
 #include "appconfig.h"
 #include "gui/appicon.h"
 #include "gui/mainwindow.h"
+#include "gui/uilanguage.h"
 #include "tui/terminalui.h"
 
 #include <cstdio>
@@ -106,11 +107,12 @@ InstanceResult startInstanceServer(QLocalServer &server) {
 
 QString unresponsiveInstanceMessage() {
 #ifdef Q_OS_WIN
-  const auto howToEnd = QStringLiteral("End lantalk.exe in Task Manager");
+  const auto howToEnd = QCoreApplication::translate("LANTalk", "End lantalk.exe in Task Manager");
 #else
-  const auto howToEnd = QStringLiteral("Stop the lantalk process");
+  const auto howToEnd = QCoreApplication::translate("LANTalk", "Stop the lantalk process");
 #endif
-  return QStringLiteral("LANTalk is already running but does not respond. "
+  return QCoreApplication::translate(
+             "LANTalk", "LANTalk is already running but does not respond. "
                         "%1 and start LANTalk again.")
       .arg(howToEnd);
 }
@@ -182,6 +184,7 @@ int main(int argc, char *argv[]) {
   application.setApplicationName(QStringLiteral("LANTalk"));
   application.setApplicationVersion(QStringLiteral(LANTALK_VERSION));
   migrateLegacySettings();
+  installUiLanguage(application);
   auto font = application.font();
   const int configuredFontSize =
       QSettings()

@@ -27,6 +27,8 @@ public:
     QString nickname;
     QString address;
     quint16 port = 0;
+    // Signed in from lantalkd's web client (CENTRAL_PEER_KIND <id> web).
+    bool web = false;
   };
 
   explicit CentralClient(QObject *parent = nullptr);
@@ -122,6 +124,7 @@ public:
   QString errorString() const override;
   QString connectionKey(bool outgoing) const override;
   QString peerNickname() const;
+  bool peerIsWebClient() const override;
 
 private:
   friend class CentralClient;

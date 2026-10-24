@@ -21,13 +21,18 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QPalette>
+#include <QSet>
 #include <QSettings>
 #include <QSignalBlocker>
+#ifdef LANTALK_HAVE_MULTIMEDIA
+#include <QSoundEffect>
+#endif
 #include <QStatusBar>
 #include <QSystemTrayIcon>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTcpSocket>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -41,22 +46,22 @@ MainWindow::MainWindow() {
   auto *central = new QWidget(this);
   auto *layout = new QVBoxLayout(central);
   host_ = new QComboBox(central);
-  host_->setPlaceholderText(QStringLiteral("No LANTalk hosts found"));
+  host_->setPlaceholderText(tr("No LANTalk hosts found"));
   tabs_ = new QTabWidget(central);
   tabs_->setTabsClosable(true);
   layout->addWidget(host_);
   layout->addWidget(tabs_);
   setCentralWidget(central);
 
-  auto *fileMenu = menuBar()->addMenu(QStringLiteral("File"));
-  auto *exitAction = fileMenu->addAction(QStringLiteral("Exit LANTalk"));
+  auto *fileMenu = menuBar()->addMenu(tr("File"));
+  auto *exitAction = fileMenu->addAction(tr("Exit LANTalk"));
   auto *connectToAction =
-      menuBar()->addAction(QStringLiteral("Connect..."));
-  auto *settingsMenu = menuBar()->addMenu(QStringLiteral("Settings"));
-  auto *fontSizeAction = settingsMenu->addAction(QStringLiteral("Font Size"));
+      menuBar()->addAction(tr("Connect..."));
+  auto *settingsMenu = menuBar()->addMenu(tr("Settings"));
+  auto *fontSizeAction = settingsMenu->addAction(tr("Font Size"));
   settingsMenu->addSeparator();
   auto *settingsAction =
-      settingsMenu->addAction(QStringLiteral("General..."));
+      settingsMenu->addAction(tr("General..."));
   applyDarkMenuStyle();
   connect(exitAction, &QAction::triggered, qApp, &QApplication::quit);
   connect(connectToAction, &QAction::triggered, this,
@@ -65,6 +70,11 @@ MainWindow::MainWindow() {
   connect(fontSizeAction, &QAction::triggered, this,
           &MainWindow::showFontSizeDialog);
   setupTrayIcon();
+#ifdef LANTALK_HAVE_MULTIMEDIA
+  messageSound_ = new QSoundEffect(this);
+  messageSound_->setSource(QUrl(QStringLiteral("qrc:/sounds/message.wav")));
+  messageSound_->setVolume(0.6f);
+#endif
   connect(host_, QOverload<int>::of(&QComboBox::activated), this,
           [this](int index) {
             if (!host_->itemData(index).toMap().isEmpty()) {
@@ -178,14 +188,14 @@ void MainWindow::updateCentralStatus() {
   }
   if (central_.isReady()) {
     statusBar()->showMessage(
-        QStringLiteral("Connected to central host %1").arg(central_.hostSpec()));
+        tr("Connected to central host %1").arg(central_.hostSpec()));
   } else if (!central_.lastError().isEmpty()) {
     statusBar()->showMessage(
-        QStringLiteral("Not connected to central host %1: %2")
+        tr("Not connected to central host %1: %2")
             .arg(central_.hostSpec(), central_.lastError()));
   } else {
     statusBar()->showMessage(
-        QStringLiteral("Connecting to central host %1…").arg(central_.hostSpec()));
+        tr("Connecting to central host %1…").arg(central_.hostSpec()));
   }
   refreshHostList();
 }
@@ -197,7 +207,7 @@ void MainWindow::showFontSizeDialog() {
                               : 11;
   bool accepted = false;
   const int fontSize = QInputDialog::getInt(
-      this, QStringLiteral("Font Size"), QStringLiteral("Font size (pt):"),
+      this, tr("Font Size"), tr("Font size (pt):"),
       currentSize, 8, 32, 1, &accepted);
   if (!accepted) return;
 
@@ -210,9 +220,9 @@ void MainWindow::showFontSizeDialog() {
 void MainWindow::setupTrayIcon() {
   trayIcon_ = new QSystemTrayIcon(this);
   auto *menu = new QMenu(this);
-  auto *openAction = menu->addAction(QStringLiteral("Open LANTalk"));
+  auto *openAction = menu->addAction(tr("Open LANTalk"));
   menu->addSeparator();
-  auto *quitAction = menu->addAction(QStringLiteral("Quit"));
+  auto *quitAction = menu->addAction(tr("Quit"));
   trayIcon_->setContextMenu(menu);
   connect(openAction, &QAction::triggered, this, &MainWindow::showFromTray);
   connect(quitAction, &QAction::triggered, qApp, &QApplication::quit);
@@ -247,9 +257,9 @@ void MainWindow::updateTrayIcon() {
     return;
   }
   trayIcon_->setToolTip(
-      QStringLiteral("LANTalk — %1 unread message%2")
-          .arg(unreadMessageCount_)
-          .arg(unreadMessageCount_ == 1 ? QString() : QStringLiteral("s")));
+      unreadMessageCount_ == 1
+          ? tr("LANTalk — 1 unread message")
+          : tr("LANTalk — %1 unread messages").arg(unreadMessageCount_));
 }
 
 void MainWindow::showFromTray() {
@@ -291,6 +301,22 @@ void MainWindow::noteIncomingMessage() {
   updateTrayIcon();
 }
 
+void MainWindow::playMessageSound(ChatTab *tab) {
+  // Only when the message would otherwise go unseen, and at most once per
+  // burst so a flurry of messages does not turn into a drum roll.
+  if ((inForeground() && tabs_->currentWidget() == tab) ||
+      !QSettings().value(QStringLiteral("notifications/sound"), true).toBool()) {
+    return;
+  }
+  if (lastMessageSound_.isValid() && lastMessageSound_.elapsed() < 1500) return;
+  lastMessageSound_.start();
+#ifdef LANTALK_HAVE_MULTIMEDIA
+  messageSound_->play();
+#else
+  QApplication::beep();
+#endif
+}
+
 void MainWindow::showNotification(ChatTab *tab, const QString &sender,
                                   const QString &preview) {
   // A desktop notification (a toast on Windows, the notification service on
@@ -329,8 +355,8 @@ void MainWindow::connectToHost() {
 
 void MainWindow::showConnectDialog() {
   bool accepted = false;
-  const auto address = QInputDialog::getText(this, QStringLiteral("Connect To"),
-                                             QStringLiteral("Host IP or name:"),
+  const auto address = QInputDialog::getText(this, tr("Connect To"),
+                                             tr("Host IP or name:"),
                                              QLineEdit::Normal, {}, &accepted)
                            .trimmed();
   if (accepted && !address.isEmpty()) {
@@ -388,8 +414,8 @@ void MainWindow::promptForNickname() {
 
   bool accepted = false;
   const auto nickname = escapeProtocolField(QInputDialog::getText(
-      this, QStringLiteral("Welcome to LANTalk"),
-      QStringLiteral("Choose a username:"), QLineEdit::Normal, {}, &accepted));
+      this, tr("Welcome to LANTalk"),
+      tr("Choose a username:"), QLineEdit::Normal, {}, &accepted));
   if (accepted && !nickname.isEmpty()) {
     settings.setValue(QStringLiteral("profile/nickname"), nickname);
   }
@@ -403,12 +429,12 @@ void MainWindow::connectToAddress(const QString &address, quint16 port,
       tabs_->setCurrentWidget(tab);
       tab->reconnectNow();
       statusBar()->showMessage(
-          QStringLiteral("Already connected to %1; switched to its tab.")
+          tr("Already connected to %1; switched to its tab.")
               .arg(tab->title()),
           5000);
     } else {
       statusBar()->showMessage(
-          QStringLiteral("A connection to %1 is already being established.")
+          tr("A connection to %1 is already being established.")
               .arg(address),
           5000);
     }
@@ -416,7 +442,7 @@ void MainWindow::connectToAddress(const QString &address, quint16 port,
   }
   auto *session = new ChatSession(ChatTransport::create(this), this);
   auto *tab = createTab(session, address, port);
-  showTab(tab, QStringLiteral("Connecting to %1…").arg(address));
+  showTab(tab, tr("Connecting to %1…").arg(address));
   session->connectToHost(address, port, nickname);
 }
 
@@ -427,13 +453,13 @@ void MainWindow::startListening() {
           .value(QStringLiteral("network/listenPort"), DefaultPort)
           .toUInt();
   if (!server_.listen(QHostAddress::Any, listenPort)) {
-    statusBar()->showMessage(QStringLiteral("Cannot listen on port %1: %2")
+    statusBar()->showMessage(tr("Cannot listen on port %1: %2")
                                  .arg(listenPort)
                                  .arg(server_.errorString()));
     return;
   }
   statusBar()->showMessage(
-      QStringLiteral("Listening on TCP port %1").arg(listenPort));
+      tr("Listening on TCP port %1").arg(listenPort));
 }
 
 void MainWindow::startDiscovery() {
@@ -441,7 +467,7 @@ void MainWindow::startDiscovery() {
   if (!discoverySocket_.bind(QHostAddress::AnyIPv4, DiscoveryPort,
                              QUdpSocket::ShareAddress |
                                  QUdpSocket::ReuseAddressHint)) {
-    statusBar()->showMessage(QStringLiteral("LAN discovery unavailable: %1")
+    statusBar()->showMessage(tr("LAN discovery unavailable: %1")
                                  .arg(discoverySocket_.errorString()));
     return;
   }
@@ -466,7 +492,7 @@ void MainWindow::startDiscovery() {
   connect(&discoverySettleTimer_, &QTimer::timeout, this, [this] {
     initialDiscoveryScanComplete_ = true;
     if (discoveredHosts_.isEmpty()) {
-      host_->setPlaceholderText(QStringLiteral("No LANTalk hosts found"));
+      host_->setPlaceholderText(tr("No LANTalk hosts found"));
     }
   });
   subnetScanTimer_.setInterval(5000);
@@ -587,13 +613,13 @@ void MainWindow::scanPrivateSubnets() {
   if (targets.isEmpty()) {
     if (!initialDiscoveryScanComplete_) {
       initialDiscoveryScanComplete_ = true;
-      host_->setPlaceholderText(QStringLiteral("No LANTalk hosts found"));
+      host_->setPlaceholderText(tr("No LANTalk hosts found"));
     }
     return;
   }
 
   if (!initialDiscoveryScanComplete_) {
-    host_->setPlaceholderText(QStringLiteral("Scanning for hosts..."));
+    host_->setPlaceholderText(tr("Scanning for hosts..."));
     discoverySettleTimer_.stop();
   }
   for (const auto &target : targets) {
@@ -622,12 +648,14 @@ void MainWindow::sendDiscoveryProbeBatch() {
 void MainWindow::refreshHostList() {
   const auto currentText = host_->currentText();
   auto hosts = discoveredHosts_.values();
+  QSet<QString> webClients;
   if (central_.isActive()) {
     // The central host lists the clients connected to it instead.
     hosts.clear();
     for (const auto &peer : central_.peers()) {
       hosts.append({peer.nickname, QHostAddress(peer.address), peer.port,
                     QDateTime::currentDateTimeUtc()});
+      if (peer.web) webClients.insert(peer.address + u'\n' + peer.nickname);
     }
   }
   std::sort(hosts.begin(), hosts.end(),
@@ -640,20 +668,22 @@ void MainWindow::refreshHostList() {
     const bool searching = central_.isActive() ? !central_.isReady()
                                                : !initialDiscoveryScanComplete_;
     host_->setPlaceholderText(
-        !searching             ? QStringLiteral("No LANTalk hosts found")
-        : central_.isActive() ? QStringLiteral("Connecting to the central host...")
-                              : QStringLiteral("Scanning for hosts..."));
+        !searching             ? tr("No LANTalk hosts found")
+        : central_.isActive() ? tr("Connecting to the central host...")
+                              : tr("Scanning for hosts..."));
     return;
   }
-  host_->addItem(QStringLiteral("Select a host to chat with"));
+  host_->addItem(tr("Select a host to chat with"));
   for (const auto &host : hosts) {
     QVariantMap endpoint;
     endpoint.insert(QStringLiteral("address"), host.address.toString());
     endpoint.insert(QStringLiteral("port"), host.port);
     endpoint.insert(QStringLiteral("nickname"), host.nickname);
-    host_->addItem(
-        QStringLiteral("%1 (%2)").arg(host.nickname, host.address.toString()),
-        endpoint);
+    const auto address = host.address.toString();
+    host_->addItem(webClients.contains(address + u'\n' + host.nickname)
+                       ? tr("%1 (Web)").arg(host.nickname)
+                       : QStringLiteral("%1 (%2)").arg(host.nickname, address),
+                   endpoint);
   }
   const auto selectedIndex = host_->findText(currentText);
   if (selectedIndex > 0) {
@@ -683,6 +713,7 @@ ChatTab *MainWindow::createTab(ChatSession *session,
   connect(tab, &ChatTab::incomingMessageReceived, this,
           [this, tab] {
             if (tabs_->currentWidget() != tab) setTabUnread(tab, true);
+            playMessageSound(tab);
             noteIncomingMessage();
           });
   connect(tab, &ChatTab::notifyIncoming, this,

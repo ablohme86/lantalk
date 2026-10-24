@@ -17,10 +17,26 @@ else()
 endif()
 
 # The central relay service runs headless on a server, so it needs only
-# QtCore and QtNetwork.
+# QtCore and QtNetwork. It shares the Ollama translation code with the client.
 add_library(lantalk_central_lib STATIC
+    appconfig.h
+    messagetranslator.cpp
+    messagetranslator.h
+    ollamaclient.cpp
+    ollamaclient.h
+    ollamadiscovery.cpp
+    ollamadiscovery.h
+    protocol/peerdiscovery.h
+    protocol/quotedmessage.cpp
+    protocol/quotedmessage.h
+    central/centrallink.cpp
+    central/centrallink.h
     central/centralserver.cpp
     central/centralserver.h
+    central/translationservice.cpp
+    central/translationservice.h
+    central/webserver.cpp
+    central/webserver.h
     protocol/centralprotocol.h
     protocol/conversationidentity.cpp
     protocol/conversationidentity.h
@@ -28,6 +44,17 @@ add_library(lantalk_central_lib STATIC
 target_include_directories(lantalk_central_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(lantalk_central_lib PUBLIC LANTALK_VERSION="${PROJECT_VERSION}")
 target_link_libraries(lantalk_central_lib PUBLIC Qt6::Network)
+# The web client lantalkd serves to browsers.
+qt_add_resources(lantalk_central_lib lantalk_web
+    PREFIX /web
+    BASE central/web
+    FILES
+        central/web/index.html
+        central/web/app.css
+        central/web/app.js
+        central/web/manifest.webmanifest
+        central/web/icon.svg
+)
 
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
@@ -50,12 +77,6 @@ if(LANTALK_BUILD_CLIENT)
     # Everything except main.cpp, so the unit tests can link the same code.
     add_library(lantalk_lib STATIC
         appconfig.h
-        ollamaclient.cpp
-        ollamaclient.h
-        ollamadiscovery.cpp
-        ollamadiscovery.h
-        messagetranslator.cpp
-        messagetranslator.h
         translationrestorer.cpp
         translationrestorer.h
         protocol/chathistory.cpp
@@ -69,9 +90,6 @@ if(LANTALK_BUILD_CLIENT)
         protocol/centralprotocol.h
         protocol/connectionregistry.cpp
         protocol/connectionregistry.h
-        protocol/peerdiscovery.h
-        protocol/quotedmessage.cpp
-        protocol/quotedmessage.h
         tui/terminalui.cpp
         tui/terminalui.h
         gui/appicon.cpp
@@ -86,6 +104,8 @@ if(LANTALK_BUILD_CLIENT)
         gui/chattab.h
         gui/mainwindow.cpp
         gui/mainwindow.h
+        gui/uilanguage.cpp
+        gui/uilanguage.h
     )
 
     target_include_directories(lantalk_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -93,6 +113,21 @@ if(LANTALK_BUILD_CLIENT)
     target_compile_definitions(lantalk_lib PUBLIC LANTALK_VERSION="${PROJECT_VERSION}")
 
     target_link_libraries(lantalk_lib PUBLIC lantalk_central_lib Qt6::Widgets Qt6::Network)
+
+    # The new-message chime plays through Qt Multimedia when it is installed;
+    # without it LANTalk falls back to the system beep.
+    find_package(Qt6 QUIET COMPONENTS Multimedia)
+    if(Qt6Multimedia_FOUND)
+        target_link_libraries(lantalk_lib PUBLIC Qt6::Multimedia)
+        target_compile_definitions(lantalk_lib PUBLIC LANTALK_HAVE_MULTIMEDIA)
+    else()
+        message(STATUS "Qt6 Multimedia not found; new messages use the system beep")
+    endif()
+    qt_add_resources(lantalk_lib lantalk_sounds
+        PREFIX /sounds
+        BASE resources
+        FILES resources/message.wav
+    )
 
     qt_add_executable(lantalk
         main.cpp

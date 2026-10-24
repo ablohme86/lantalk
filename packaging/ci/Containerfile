@@ -16,11 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libfontconfig1 libfreetype6 libdbus-1-3 libglib2.0-0 \
         libx11-xcb1 libxcb-cursor0 libxcb-icccm4 libxcb-keysyms1 \
         libxcb-render-util0 libxcb-image0 libxcb-shape0 libxcb-randr0 \
-        libxcb-xinerama0 libxcb-xkb1 \
+        libxcb-xinerama0 libxcb-xkb1 libpulse0 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir aqtinstall \
-    && aqt install-qt linux desktop "${QT_VERSION}" linux_gcc_64 -O /opt/qt \
+    && aqt install-qt linux desktop "${QT_VERSION}" linux_gcc_64 -m qtmultimedia -O /opt/qt \
     && rm -rf /root/.cache aqtinstall.log
 
 ENV CMAKE_PREFIX_PATH=/opt/qt/${QT_VERSION}/gcc_64

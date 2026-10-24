@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Added
+
+- A soft chime plays for new messages that would otherwise go unseen (the
+  window is in the background or another tab is open), at most once per
+  burst. **Settings → General** can turn it off. It uses Qt Multimedia
+  when available and the system beep otherwise.
+- The GUI is available in English, Norwegian, Simplified Chinese, and
+  Traditional Chinese. It follows the system language (English otherwise),
+  and **Settings → General → Language** overrides it after a restart.
+- `lantalkd` serves a web client for phones and browsers on port 45456
+  (`--web-port`, `0` turns it off; `--web-cert`/`--web-key` for HTTPS).
+  People sign in with a nickname and the central host password and chat
+  with LANTalk users: people list with search and unread counts, typing,
+  quotes, links, images, files, history in the browser, and messages kept
+  for people who are away. It follows the browser's language and dark mode.
+- Live Translate on the web client: `lantalkd` translates with the Ollama
+  server given by `--ollama-url`/`--ollama-model`, or the page offers the
+  Ollama servers `lantalkd` finds on its network (`--no-ollama-discovery`
+  turns the search off) and an Ollama address of the user's own.
+- LANTalk (GUI and TUI) shows web users as `Nickname (Web)` in the host
+  list and on their tabs.
+
+### Changed
+
+- While the other person has Live Translate on, your Live Translate button
+  is disabled and says why, so only one side translates at a time.
+
 ## v1.9.0 - 2026-10-24
 
 ### Changed

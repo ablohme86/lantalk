@@ -151,6 +151,7 @@ Linux or Windows server:
 ```sh
 lantalkd --port 45455            # all addresses
 lantalkd --listen 10.0.0.5 -p 45455
+lantalkd --web-port 8080         # web client on port 8080 (see below)
 ```
 
 To require a password, put it on the first line of a file and pass
@@ -166,6 +167,68 @@ settings change. Clients keep the password in their LANTalk settings in
 plain text.
 
 It logs sign-ins, sign-outs, and refused sign-ins, never message contents.
+
+### Web client
+
+`lantalkd` also serves a web version of LANTalk for phones and other
+devices without the app, at `http://<server>:45456/` (`--web-port` changes
+the port; `--web-port 0` turns it off). People sign in with a nickname and
+the central host password and then appear to everyone else as an ordinary
+host. The page lists who is online, with search, unread counts, and typing
+indicators, and supports conversations with quotes, links, images, and
+files up to 50 MB. On a phone it shows one screen at a time; on a wider
+screen the people list and the conversation sit side by side. It follows the
+browser's language (English, Norwegian, Simplified or Traditional Chinese,
+changeable on the sign-in page) and light or dark mode, and can be added to
+the home screen.
+
+The page keeps the last messages of each conversation in the browser, and
+messages written while the other person is away are sent when they come
+back. "Remember me" keeps the password in the browser's storage so the page
+signs in again by itself; without it, only the current tab remembers it. A
+phone that locks its screen usually drops the connection, so the person
+shows as offline until the page is opened again. LANTalk shows web users as
+`Nickname (Web)` in the host list and on their tabs.
+
+Live Translate works on the page too, with the same languages and the same
+rules: the button in the conversation's title bar turns it on and off, it
+comes back on by itself after a reconnect, and the original of a translated
+message is a tap away. Where the translation happens depends on `lantalkd`:
+
+- Started with `--ollama-url <url> --ollama-model <model>`, it translates
+  every web client's messages with that server; the page only asks for the
+  two languages.
+- Otherwise the page offers two choices. *Ollama found by the server* lists
+  the Ollama servers `lantalkd` finds on its own network (this computer and
+  the private subnets of its network cards, as LANTalk searches), and
+  `lantalkd` makes the calls; it searches when someone opens the dialog and
+  translates only with servers it found, so nobody can make it contact
+  other addresses. `--no-ollama-discovery` turns the search off. *My own
+  Ollama address* lets the phone talk to an Ollama server directly, for
+  example one on the phone's own network. Browsers only allow that when
+  Ollama permits the page: start Ollama with `OLLAMA_ORIGINS` set to the
+  page's address (e.g. `OLLAMA_ORIGINS=http://chat.example.com:45456`), and
+  note that a page served over HTTPS cannot reach an `http://` Ollama.
+
+Everyone who knows the central host password can use the Ollama servers
+that `lantalkd` translates with, up to four translations at a time each.
+
+Only one side of a conversation translates at a time, in LANTalk and on the
+page alike: while the other person has Live Translate on, your button is
+disabled and says so.
+
+The page computes the same challenge proof as LANTalk, so the password does
+not cross the network, but messages travel in clear text over plain HTTP.
+To serve the page over HTTPS (and WSS), pass a PEM certificate and its
+unencrypted key:
+
+```sh
+lantalkd --web-cert /etc/lantalk/cert.pem --web-key /etc/lantalk/key.pem
+```
+
+The browser speaks the central protocol over a WebSocket at `/ws`, one
+`CENTRAL_` line per text message, so `lantalkd` still only relays lines.
+Behind a reverse proxy, every web user gets the proxy's address.
 
 To build and install only the service on a Linux server, for example one
 without Qt Widgets, run:
@@ -207,6 +270,10 @@ followed by `CENTRAL_WELCOME <id> <address>`. After that the service reports
 `CENTRAL_PEER` and `CENTRAL_PEER_GONE <id>` as clients come and go.
 `CENTRAL_OPEN <channel> <peer id>` opens a conversation (the peer gets
 `CENTRAL_INCOMING <channel> <id>` and the opener `CENTRAL_OPENED <channel>`).
+A web client is followed by `CENTRAL_PEER_KIND <id> web`, which older
+clients ignore. `CENTRAL_OLLAMA`, `CENTRAL_OLLAMA_SCAN`, `CENTRAL_TRANSLATE`,
+`CENTRAL_TRANSLATED`, and `CENTRAL_TRANSLATE_FAILED` carry the web client's
+Live Translate (see `central/translationservice.h`).
 `CENTRAL_DATA <channel> <line>` carries one unchanged LANCHAT PROTOCOL line,
 and `CENTRAL_CLOSE <channel> [reason]` ends it. Nicknames are base64url
 encoded. Clients send `CENTRAL_PING` every 30 seconds, and either side drops

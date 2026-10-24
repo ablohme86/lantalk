@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="3" y1="3" x2="61" y2="61" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#17243d"/><stop offset="1" stop-color="#334978"/>
+    </linearGradient>
+    <linearGradient id="rear" x1="29" y1="29" x2="54" y2="49" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#b59bff"/><stop offset="1" stop-color="#8069e8"/>
+    </linearGradient>
+    <linearGradient id="front" x1="10" y1="12" x2="47" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#62f0d0"/><stop offset="1" stop-color="#17bcae"/>
+    </linearGradient>
+  </defs>
+  <rect x="2.5" y="2.5" width="59" height="59" rx="17" fill="url(#bg)" stroke="#ffffff" stroke-opacity=".15" stroke-width="1.2"/>
+  <rect x="29" y="29" width="25" height="20" rx="7" fill="url(#rear)"/>
+  <path d="M44 46 48 53 50 46Z" fill="url(#rear)"/>
+  <rect x="9" y="11" width="39" height="33" rx="10" fill="url(#front)"/>
+  <path d="M18 40 13 51 28 41Z" fill="url(#front)"/>
+  <g fill="#12344a"><circle cx="20" cy="27.5" r="2.4"/><circle cx="28.5" cy="27.5" r="2.4"/><circle cx="37" cy="27.5" r="2.4"/></g>
+</svg>

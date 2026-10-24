@@ -37,6 +37,8 @@ private:
     QHostAddress address;
     quint16 port;
     QDateTime lastSeen;
+    // Signed in from lantalkd's web client.
+    bool web = false;
   };
 
   struct Conversation {

@@ -20,6 +20,8 @@
 namespace CentralProtocol {
 
 inline constexpr quint16 DefaultCentralPort = 45455;
+// lantalkd serves the web client for browsers on this port.
+inline constexpr quint16 DefaultWebPort = 45456;
 inline constexpr int Version = 1;
 // Clients ping this often; either side drops a connection that has been
 // silent for IdleTimeoutMs.
