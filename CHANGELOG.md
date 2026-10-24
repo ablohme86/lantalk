@@ -49,6 +49,10 @@
 
 ### Changed
 
+- The GUI lists the available hosts in a **Hosts** sidebar, as the TUI and
+  the web client do, instead of a drop-down list: nickname with the address
+  (or `Web`) below it, one click to open or switch to the conversation, and
+  the open conversation's host selected. The sidebar's width is remembered.
 - While the other person has Live Translate on, your Live Translate button
   is disabled and says why, so only one side translates at a time.
 

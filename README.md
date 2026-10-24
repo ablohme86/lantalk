@@ -108,13 +108,17 @@ interactive TTY. Enable translation for the active conversation with
 `/translate <my language> | <peer language>`; pending Ollama translations appear
 in the bottom status line.
 
-Available LANTalk hosts are discovered automatically and shown as
-`Nickname (IP address)` in the read-only Host selector. LANTalk uses UDP
+Available LANTalk hosts are discovered automatically and listed in the
+**Hosts** sidebar on the left of the GUI, each with its nickname and, below
+it, its IP address (or `Web` for a web client user); the sidebar's width can
+be dragged and is remembered. LANTalk uses UDP
 announcements and unicast probes to addresses in private IPv4 interface
 subnets; peers answer with their configured TCP chat port (45454 by default).
 Subnets wider than `/16` are skipped to avoid sweeping very large private
 address ranges. LANTalk filters its own discovery ID and local interface
-addresses from the host list. Selecting a discovered host connects immediately.
+addresses from the host list. Clicking a host connects immediately, or
+switches to its tab if the conversation is open, and the host of the tab in
+front stays selected.
 
 Drop images or files into a conversation to send them to the connected host.
 Image thumbnails appear in the chat log and open in an in-chat viewer when
@@ -135,9 +139,8 @@ enter its IP address or DNS name, optionally with `:port`, under
 In central mode LANTalk:
 
 - stops listening on its TCP port and stops LAN discovery;
-- lists the clients connected to the central host in the host selector
-  (`HOSTS ON NETWORK` in the TUI), shown as `Nickname (IP address)` with the
-  address the central host sees;
+- lists the clients connected to the central host in the Hosts sidebar
+  (`HOSTS ON NETWORK` in the TUI), with the address the central host sees;
 - looks for Ollama servers only on this computer and at the configured URL,
   not on the network cards' subnets;
 - sends every conversation through the central host. Everything else works

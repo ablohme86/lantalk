@@ -8,17 +8,19 @@
 #include "protocol/chatsession.h"
 #include "protocol/chattransport.h"
 #include "protocol/connectionregistry.h"
+#include "protocol/conversationidentity.h"
 #include "protocol/peerdiscovery.h"
 
 #include <QAction>
 #include <QApplication>
-#include <QComboBox>
 #include <QColor>
 #include <QEvent>
 #include <QFont>
 #include <QGuiApplication>
 #include <QInputDialog>
+#include <QLabel>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPalette>
@@ -29,6 +31,7 @@
 #ifdef LANTALK_HAVE_MULTIMEDIA
 #include <QSoundEffect>
 #endif
+#include <QSplitter>
 #include <QStatusBar>
 #include <QSystemTrayIcon>
 #include <QTabBar>
@@ -38,22 +41,112 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include <QPainter>
+#include <QStyledItemDelegate>
+
 #include <algorithm>
+
+namespace {
+
+// Where a sidebar host is: its address, or "Web".
+constexpr int HostSubtitleRole = Qt::UserRole + 1;
+
+// A sidebar host: the nickname, and below it in a smaller, muted font
+// where the host is.
+class HostItemDelegate final : public QStyledItemDelegate {
+public:
+  using QStyledItemDelegate::QStyledItemDelegate;
+
+  void paint(QPainter *painter, const QStyleOptionViewItem &option,
+             const QModelIndex &index) const override {
+    QStyleOptionViewItem background = option;
+    initStyleOption(&background, index);
+    background.text.clear();
+    option.widget->style()->drawControl(QStyle::CE_ItemViewItem, &background,
+                                        painter, option.widget);
+    const bool selected = option.state.testFlag(QStyle::State_Selected);
+    const auto area = option.rect.adjusted(10, 5, -8, -5);
+    painter->save();
+    painter->setPen(option.palette.color(
+        selected ? QPalette::HighlightedText : QPalette::Text));
+    painter->setFont(option.font);
+    const QFontMetrics nameMetrics(option.font);
+    painter->drawText(area.left(), area.top() + nameMetrics.ascent(),
+                      nameMetrics.elidedText(index.data().toString(),
+                                             Qt::ElideRight, area.width()));
+    auto small = option.font;
+    small.setPointSizeF(small.pointSizeF() * 0.85);
+    painter->setFont(small);
+    auto muted = option.palette.color(
+        selected ? QPalette::HighlightedText : QPalette::PlaceholderText);
+    painter->setPen(muted);
+    const QFontMetrics smallMetrics(small);
+    painter->drawText(area.left(),
+                      area.top() + nameMetrics.height() + 2 + smallMetrics.ascent(),
+                      smallMetrics.elidedText(index.data(HostSubtitleRole).toString(),
+                                              Qt::ElideRight, area.width()));
+    painter->restore();
+  }
+
+  QSize sizeHint(const QStyleOptionViewItem &option,
+                 const QModelIndex &) const override {
+    auto small = option.font;
+    small.setPointSizeF(small.pointSizeF() * 0.85);
+    return {160, QFontMetrics(option.font).height() +
+                     QFontMetrics(small).height() + 12};
+  }
+};
+
+} // namespace
 
 MainWindow::MainWindow() {
   setWindowTitle(QStringLiteral("LANTalk v%1").arg(
       QCoreApplication::applicationVersion()));
   setWindowIcon(createAppIcon());
   resize(900, 600);
-  auto *central = new QWidget(this);
-  auto *layout = new QVBoxLayout(central);
-  host_ = new QComboBox(central);
-  host_->setPlaceholderText(tr("No LANTalk hosts found"));
-  tabs_ = new QTabWidget(central);
+  splitter_ = new QSplitter(Qt::Horizontal, this);
+  auto *sidebar = new QWidget(splitter_);
+  auto *sidebarLayout = new QVBoxLayout(sidebar);
+  sidebarLayout->setContentsMargins(6, 6, 0, 6);
+  sidebarLayout->setSpacing(4);
+  auto *hostsTitle = new QLabel(tr("Hosts"), sidebar);
+  auto titleFont = hostsTitle->font();
+  titleFont.setBold(true);
+  hostsTitle->setFont(titleFont);
+  hosts_ = new QListWidget(sidebar);
+  hosts_->setSelectionMode(QAbstractItemView::SingleSelection);
+  hosts_->setUniformItemSizes(true);
+  hosts_->setSpacing(1);
+  hosts_->setItemDelegate(new HostItemDelegate(hosts_));
+  // The open conversation's host stays marked while typing in it.
+  auto hostsPalette = hosts_->palette();
+  for (const auto role : {QPalette::Highlight, QPalette::HighlightedText}) {
+    hostsPalette.setColor(QPalette::Inactive, role,
+                          hostsPalette.color(QPalette::Active, role));
+  }
+  hosts_->setPalette(hostsPalette);
+  hostListStatus_ = new QLabel(tr("Scanning for hosts..."), sidebar);
+  hostListStatus_->setWordWrap(true);
+  hostListStatus_->setAlignment(Qt::AlignTop | Qt::AlignLeft);
+  hostListStatus_->setStyleSheet(QStringLiteral("color: palette(mid); padding: 6px 2px;"));
+  sidebarLayout->addWidget(hostsTitle);
+  sidebarLayout->addWidget(hosts_, 1);
+  sidebarLayout->addWidget(hostListStatus_, 1);
+  hosts_->hide();
+  tabs_ = new QTabWidget(splitter_);
   tabs_->setTabsClosable(true);
-  layout->addWidget(host_);
-  layout->addWidget(tabs_);
-  setCentralWidget(central);
+  splitter_->addWidget(sidebar);
+  splitter_->addWidget(tabs_);
+  splitter_->setStretchFactor(1, 1);
+  splitter_->setChildrenCollapsible(false);
+  splitter_->setSizes({220, 680});
+  splitter_->restoreState(
+      QSettings().value(QStringLiteral("appearance/sidebar")).toByteArray());
+  connect(splitter_, &QSplitter::splitterMoved, this, [this] {
+    QSettings().setValue(QStringLiteral("appearance/sidebar"),
+                         splitter_->saveState());
+  });
+  setCentralWidget(splitter_);
 
   auto *fileMenu = menuBar()->addMenu(tr("File"));
   auto *exitAction = fileMenu->addAction(tr("Exit LANTalk"));
@@ -77,12 +170,11 @@ MainWindow::MainWindow() {
   messageSound_->setSource(QUrl(QStringLiteral("qrc:/sounds/message.wav")));
   messageSound_->setVolume(0.6f);
 #endif
-  connect(host_, QOverload<int>::of(&QComboBox::activated), this,
-          [this](int index) {
-            if (!host_->itemData(index).toMap().isEmpty()) {
-              connectToHost();
-            }
-          });
+  // One click opens the conversation, or switches to it if it is open.
+  connect(hosts_, &QListWidget::itemClicked, this,
+          &MainWindow::connectToHostItem);
+  connect(hosts_, &QListWidget::itemActivated, this,
+          &MainWindow::connectToHostItem);
   connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
     auto *tab = tabs_->widget(index);
     if (auto *chatTab = qobject_cast<ChatTab *>(tab)) {
@@ -95,6 +187,7 @@ MainWindow::MainWindow() {
   connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
     if (auto *tab = qobject_cast<ChatTab *>(tabs_->widget(index))) {
       setTabUnread(tab, false);
+      selectHostForTab(tab);
     }
   });
   connect(&server_, &QTcpServer::newConnection, this,
@@ -365,18 +458,13 @@ void MainWindow::setTabUnread(ChatTab *tab, bool unread) {
       index, unread ? QColor(QStringLiteral("#ffbf47")) : QColor());
 }
 
-void MainWindow::connectToHost() {
-  const auto endpoint = host_->currentData().toMap();
-  const auto address =
-      endpoint.isEmpty() ? host_->currentText().trimmed()
-                         : endpoint.value(QStringLiteral("address")).toString();
+void MainWindow::connectToHostItem(QListWidgetItem *item) {
+  const auto endpoint = item ? item->data(Qt::UserRole).toMap() : QVariantMap();
+  const auto address = endpoint.value(QStringLiteral("address")).toString();
   if (address.isEmpty()) {
     return;
   }
-  const auto peerPort = endpoint.isEmpty()
-                            ? DefaultPort
-                            : endpoint.value(QStringLiteral("port")).toUInt();
-  connectToAddress(address, peerPort,
+  connectToAddress(address, endpoint.value(QStringLiteral("port")).toUInt(),
                    endpoint.value(QStringLiteral("nickname")).toString());
 }
 
@@ -519,7 +607,7 @@ void MainWindow::startDiscovery() {
   connect(&discoverySettleTimer_, &QTimer::timeout, this, [this] {
     initialDiscoveryScanComplete_ = true;
     if (discoveredHosts_.isEmpty()) {
-      host_->setPlaceholderText(tr("No LANTalk hosts found"));
+      setHostListStatus(tr("No LANTalk hosts found"));
     }
   });
   subnetScanTimer_.setInterval(5000);
@@ -640,13 +728,13 @@ void MainWindow::scanPrivateSubnets() {
   if (targets.isEmpty()) {
     if (!initialDiscoveryScanComplete_) {
       initialDiscoveryScanComplete_ = true;
-      host_->setPlaceholderText(tr("No LANTalk hosts found"));
+      setHostListStatus(tr("No LANTalk hosts found"));
     }
     return;
   }
 
   if (!initialDiscoveryScanComplete_) {
-    host_->setPlaceholderText(tr("Scanning for hosts..."));
+    setHostListStatus(tr("Scanning for hosts..."));
     discoverySettleTimer_.stop();
   }
   for (const auto &target : targets) {
@@ -673,7 +761,6 @@ void MainWindow::sendDiscoveryProbeBatch() {
 }
 
 void MainWindow::refreshHostList() {
-  const auto currentText = host_->currentText();
   auto hosts = discoveredHosts_.values();
   QSet<QString> webClients;
   if (central_.isActive()) {
@@ -689,35 +776,59 @@ void MainWindow::refreshHostList() {
             [](const DiscoveredHost &left, const DiscoveredHost &right) {
               return left.nickname.localeAwareCompare(right.nickname) < 0;
             });
-  const QSignalBlocker blocker(host_);
-  host_->clear();
+  const QSignalBlocker blocker(hosts_);
+  hosts_->clear();
   if (hosts.isEmpty()) {
     const bool searching = central_.isActive() ? !central_.isReady()
                                                : !initialDiscoveryScanComplete_;
-    host_->setPlaceholderText(
-        !searching             ? tr("No LANTalk hosts found")
-        : central_.isActive() ? tr("Connecting to the central host...")
-                              : tr("Scanning for hosts..."));
+    setHostListStatus(!searching             ? tr("No LANTalk hosts found")
+                      : central_.isActive() ? tr("Connecting to the central host...")
+                                            : tr("Scanning for hosts..."));
     return;
   }
-  host_->addItem(tr("Select a host to chat with"));
   for (const auto &host : hosts) {
+    const auto address = host.address.toString();
+    const bool web = webClients.contains(address + u'\n' + host.nickname);
     QVariantMap endpoint;
-    endpoint.insert(QStringLiteral("address"), host.address.toString());
+    endpoint.insert(QStringLiteral("address"), address);
     endpoint.insert(QStringLiteral("port"), host.port);
     endpoint.insert(QStringLiteral("nickname"), host.nickname);
-    const auto address = host.address.toString();
-    host_->addItem(webClients.contains(address + u'\n' + host.nickname)
-                       ? tr("%1 (Web)").arg(host.nickname)
-                       : QStringLiteral("%1 (%2)").arg(host.nickname, address),
-                   endpoint);
+    auto *item = new QListWidgetItem(host.nickname, hosts_);
+    item->setData(HostSubtitleRole, web ? tr("Web") : address);
+    item->setData(Qt::UserRole, endpoint);
+    item->setToolTip(web ? tr("%1 (Web)").arg(host.nickname)
+                         : QStringLiteral("%1 (%2)").arg(host.nickname, address));
   }
-  const auto selectedIndex = host_->findText(currentText);
-  if (selectedIndex > 0) {
-    host_->setCurrentIndex(selectedIndex);
-  } else {
-    host_->setCurrentIndex(0);
+  setHostListStatus({});
+  if (auto *tab = qobject_cast<ChatTab *>(tabs_->currentWidget())) {
+    selectHostForTab(tab);
   }
+}
+
+void MainWindow::setHostListStatus(const QString &text) {
+  hostListStatus_->setText(text);
+  hostListStatus_->setVisible(!text.isEmpty());
+  hosts_->setVisible(text.isEmpty());
+}
+
+void MainWindow::selectHostForTab(ChatTab *tab) {
+  // The host whose conversation is in front is the selected one; until the
+  // handshake names the peer, the selection stays as it is.
+  if (tab->peerNickname().isEmpty()) return;
+  const QSignalBlocker blocker(hosts_);
+  for (int row = 0; row < hosts_->count(); ++row) {
+    const auto endpoint = hosts_->item(row)->data(Qt::UserRole).toMap();
+    if (ConversationIdentity::sameAddress(
+            endpoint.value(QStringLiteral("address")).toString(),
+            tab->reconnectAddress()) &&
+        ConversationIdentity::sameNickname(
+            endpoint.value(QStringLiteral("nickname")).toString(),
+            tab->peerNickname())) {
+      hosts_->setCurrentRow(row);
+      return;
+    }
+  }
+  hosts_->clearSelection();
 }
 
 ChatTab *MainWindow::createTab(ChatSession *session,
@@ -750,6 +861,7 @@ ChatTab *MainWindow::createTab(ChatSession *session,
   connect(tab, &ChatTab::titleChanged, this, [this, tab] {
     const auto tabIndex = tabs_->indexOf(tab);
     if (tabIndex >= 0) {
+      if (tabs_->currentWidget() == tab) selectHostForTab(tab);
       tabs_->setTabText(tabIndex, tab->title());
       persistOpenConnections();
     }

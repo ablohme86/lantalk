@@ -16,7 +16,10 @@
 #include <QUdpSocket>
 #include <QUuid>
 
-class QComboBox;
+class QLabel;
+class QListWidget;
+class QListWidgetItem;
+class QSplitter;
 class ChatSession;
 class ChatTab;
 class QEvent;
@@ -39,7 +42,10 @@ protected:
 private slots:
   void showSettings();
   void showFontSizeDialog();
-  void connectToHost();
+  void connectToHostItem(QListWidgetItem *item);
+  // The sidebar's text while it lists no hosts.
+  void setHostListStatus(const QString &text);
+  void selectHostForTab(ChatTab *tab);
   void showConnectDialog();
   void acceptConnection();
 
@@ -105,7 +111,10 @@ private:
   const QString discoveryId_ =
       QUuid::createUuid().toString(QUuid::WithoutBraces);
   QHash<QString, DiscoveredHost> discoveredHosts_;
-  QComboBox *host_;
+  // The sidebar of available hosts, as in the TUI and the web client.
+  QSplitter *splitter_;
+  QListWidget *hosts_;
+  QLabel *hostListStatus_;
   QTabWidget *tabs_;
   QSystemTrayIcon *trayIcon_ = nullptr;
   OllamaDiscovery ollamaDiscovery_;
