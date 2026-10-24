@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.10.0 - 2026-10-24
+
 ### Added
 
 - A soft chime plays for new messages that would otherwise go unseen (the
